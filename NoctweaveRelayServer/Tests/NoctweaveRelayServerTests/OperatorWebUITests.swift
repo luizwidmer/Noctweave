@@ -134,6 +134,64 @@ final class OperatorWebUITests: XCTestCase {
         XCTAssertEqual(updated.noctwebRelaySuffix?.rawValue, ".relaytest")
     }
 
+    func testUnrelatedOperatorEditPreservesEndpointTrustAnchors() throws {
+        let fingerprint = Data(repeating: 0xA1, count: 32)
+        let directoryKey = try FederationDirectorySignature.publicKeyDataThrowing(
+            from: FederationDirectorySignature.privateKeyDataThrowing(from: nil)
+        )
+        let advertised = RelayEndpoint(
+            host: "relay.example.org", port: 443, useTLS: true,
+            transport: .http, tlsCertificateFingerprintSHA256: fingerprint
+        )
+        let peer = RelayEndpoint(
+            host: "peer.example.org", port: 443, useTLS: true,
+            transport: .http, tlsCertificateFingerprintSHA256: fingerprint
+        )
+        let coordinator = RelayEndpoint(
+            host: "coordinator.example.org", port: 443, useTLS: true,
+            transport: .http, tlsCertificateFingerprintSHA256: fingerprint,
+            directorySigningPublicKey: directoryKey
+        )
+        let replica = RelayEndpoint(
+            host: "replica.example.org", port: 443, useTLS: true,
+            transport: .http, tlsCertificateFingerprintSHA256: fingerprint
+        )
+        var base = makeBaseConfiguration()
+        base.federation = FederationDescriptor(mode: .manual)
+        base.advertisedEndpoint = advertised
+        base.federationAllowList = [peer]
+        base.federationCoordinatorEndpoints = [coordinator]
+        base.hiddenRetrieval = HiddenRetrievalSupport(
+            mode: .coverQuery,
+            replicatedXorPIRReplicas: [HiddenRetrievalPIRReplica(
+                replicaId: "replica-a", operatorId: "operator-a",
+                endpoint: replica
+            )]
+        )
+        var editable = OperatorEditableConfiguration(configuration: base)
+        editable.operatorNote = "Unrelated update"
+
+        let updated = try editable.validatedConfiguration(from: base)
+        XCTAssertEqual(updated.advertisedEndpoint, advertised)
+        XCTAssertEqual(updated.federationAllowList, [peer])
+        XCTAssertEqual(updated.federationCoordinatorEndpoints, [coordinator])
+        XCTAssertEqual(updated.hiddenRetrieval?.replicatedXorPIRReplicas?.first?.endpoint, replica)
+
+        var mixedCase = base
+        mixedCase.advertisedEndpoint = RelayEndpoint(
+            host: "ReLaY.example.org", port: 443, useTLS: true,
+            transport: .http, tlsCertificateFingerprintSHA256: fingerprint
+        )
+        var normalizedEdit = OperatorEditableConfiguration(configuration: mixedCase)
+        normalizedEdit.advertisedEndpoint = "https://relay.example.org:443"
+        let normalized = try normalizedEdit.validatedConfiguration(from: mixedCase)
+        XCTAssertEqual(normalized.advertisedEndpoint?.host.lowercased(), "relay.example.org")
+        XCTAssertEqual(
+            normalized.advertisedEndpoint?.tlsCertificateFingerprintSHA256,
+            fingerprint
+        )
+    }
+
     func testOperatorConfigurationStagesNoctwebDataOnlyWithHosting() throws {
         let base = makeBaseConfiguration()
         var invalid = OperatorEditableConfiguration(configuration: base)

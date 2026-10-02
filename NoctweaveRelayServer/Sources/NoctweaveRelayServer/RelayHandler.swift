@@ -11,6 +11,49 @@ private enum FederationDirectoryValidationError: Error {
     case invalidSnapshot
 }
 
+private enum FederationAdmissionError: Error {
+    case busy
+}
+
+private struct ValidatedCoordinatorDirectory {
+    let nodes: [FederationNodeRecord]
+    let signingPublicKey: Data?
+}
+
+private struct AuthenticatedFederationPeer {
+    let info: RelayInfo
+    let endpoint: RelayEndpoint
+}
+
+private struct CuratedOutboundEndorsement {
+    let endpoint: RelayEndpoint
+    let identity: SignedRelayIdentityClaimV1
+}
+
+private final class FederationAdmissionLimiter: @unchecked Sendable {
+    static let shared = FederationAdmissionLimiter()
+
+    private let lock = NIOLock()
+    private var inFlight = 0
+    // Curated admission may contact up to 16 configured coordinators per claim.
+    private let maximumInFlight = 8
+
+    func tryAcquire() -> Bool {
+        lock.withLock {
+            guard inFlight < maximumInFlight else { return false }
+            inFlight += 1
+            return true
+        }
+    }
+
+    func release() {
+        lock.withLock {
+            precondition(inFlight > 0)
+            inFlight -= 1
+        }
+    }
+}
+
 private enum RelayForwardHTTPError: Error {
     case invalidURL
     case badStatus(Int)
@@ -333,16 +376,16 @@ final class RelayHandler: ChannelInboundHandler {
                     code: .authenticationRequired
                 )
             }
-            let eventLoop = context.eventLoop
-            let makeSnapshot: ([FederationNodeRecord]) -> RelayResponse = {
-                nodes in
+            let makeSnapshot: () -> RelayResponse = {
                 do {
                     let now = Date()
                     let identity = try self.relayIdentityRuntime
                         .signedIdentity(
-                            configuration: self.relayConfiguration,
+                            configuration: relayConfiguration,
                             advertisedEndpoints:
-                                self.advertisedIdentityEndpoints(),
+                                self.advertisedIdentityEndpoints(
+                                    configuration: relayConfiguration
+                                ),
                             hostSigningPublicKey:
                                 self.netHostStore?.signingPublicKey,
                             at: now
@@ -353,21 +396,13 @@ final class RelayHandler: ChannelInboundHandler {
                             now: now
                         )
                     }
-                    for peerIdentity in nodes.compactMap({
-                        $0.relayInfo.relayIdentity
-                    }) where peerIdentity.claim.noctwebSuffix != nil {
-                        try self.store.claimNoctwebNamespace(
-                            peerIdentity,
-                            now: now
-                        )
-                    }
                     let ledger = try NoctwebNamespaceLedgerV1(
                         records: self.store.noctwebNamespaceRecords(
                             at: now
                         )
                     )
                     let payload = try ledger.snapshotPayload(
-                        federation: self.relayConfiguration.federation,
+                        federation: relayConfiguration.federation,
                         at: now
                     )
                     let snapshot = try NoctwebNamespaceSnapshotV1.signed(
@@ -387,26 +422,7 @@ final class RelayHandler: ChannelInboundHandler {
                     )
                 }
             }
-            guard relayConfiguration.kind != .coordinator,
-                  relayConfiguration.federation.mode != .solo else {
-                return eventLoop.makeSucceededFuture(makeSnapshot([]))
-            }
-            let directoryRequest = ListFederationNodesRequest(
-                mode: relayConfiguration.federation.mode,
-                federationName: relayConfiguration.federation.name,
-                onlyHealthy: true,
-                maxStalenessSeconds:
-                    relayConfiguration
-                        .coordinatorDirectoryMaxStalenessSeconds,
-                requireSignedSnapshot:
-                    relayConfiguration.federation.mode == .manual
-                        ? false
-                        : relayConfiguration.curatedRequireSignedDirectory
-            )
-            return fetchCoordinatorNodeDirectory(
-                request: directoryRequest,
-                on: eventLoop
-            ).map(makeSnapshot)
+            return context.eventLoop.makeSucceededFuture(makeSnapshot())
         case .claimNoctwebNamespace(let claim):
             guard claim.identity.claim.federationMode
                     == relayConfiguration.federation.mode,
@@ -418,43 +434,90 @@ final class RelayHandler: ChannelInboundHandler {
                     code: .authenticationRequired
                 )
             }
-            do {
-                let suffix = claim.identity.claim.noctwebSuffix!
-                let previous = store.noctwebNamespaceRecord(
-                    for: suffix
-                )
-                try store.claimNoctwebNamespace(claim.identity)
-                guard let record = store.noctwebNamespaceRecord(
+            func applyClaim() -> RelayResponse {
+                do {
+                    let suffix = claim.identity.claim.noctwebSuffix!
+                    let previous = store.noctwebNamespaceRecord(
                         for: suffix
-                      ) else {
-                    return failure(
-                        "Noctweb namespace claim was not retained.",
-                        code: .internalFailure
+                    )
+                    try store.claimNoctwebNamespace(claim.identity)
+                    guard let record = store.noctwebNamespaceRecord(
+                            for: suffix
+                          ) else {
+                        return .error(
+                            "Noctweb namespace claim was not retained.",
+                            code: .internalFailure,
+                            respondingTo: request
+                        )
+                    }
+                    if previous != record {
+                        propagateNoctwebNamespaceMutation(
+                            request,
+                            on: context.eventLoop
+                        )
+                    }
+                    return .success(
+                        .noctwebNamespaceRecord(record),
+                        respondingTo: request
+                    )
+                } catch NoctwebNamespaceLedgerErrorV1.suffixAlreadyOwned {
+                    return .error(
+                        "Noctweb suffix is already owned.",
+                        code: .conflict,
+                        respondingTo: request
+                    )
+                } catch NoctwebNamespaceLedgerErrorV1.suffixTombstoned {
+                    return .error(
+                        "Noctweb suffix is permanently tombstoned.",
+                        code: .conflict,
+                        respondingTo: request
+                    )
+                } catch {
+                    return .error(
+                        "Noctweb namespace claim is invalid.",
+                        code: .invalidRequest,
+                        respondingTo: request
                     )
                 }
-                if previous != record {
-                    propagateNoctwebNamespaceMutation(
-                        request,
-                        on: context.eventLoop
-                    )
-                }
-                return success(.noctwebNamespaceRecord(record))
-            } catch NoctwebNamespaceLedgerErrorV1.suffixAlreadyOwned {
-                return failure(
-                    "Noctweb suffix is already owned.",
-                    code: .conflict
-                )
-            } catch NoctwebNamespaceLedgerErrorV1.suffixTombstoned {
-                return failure(
-                    "Noctweb suffix is permanently tombstoned.",
-                    code: .conflict
-                )
-            } catch {
-                return failure(
-                    "Noctweb namespace claim is invalid.",
-                    code: .invalidRequest
-                )
             }
+            if relayConfiguration.federation.mode != .open {
+                return isAdmittedNamespaceClaim(
+                    claim.identity,
+                    configuration: relayConfiguration,
+                    on: context.eventLoop
+                ).map { admitted in
+                    guard admitted else {
+                        return .error(
+                            "Noctweb namespace claimant is not an authenticated federation member.",
+                            code: .authenticationRequired,
+                            respondingTo: request
+                        )
+                    }
+                    guard self.currentRelayConfiguration == relayConfiguration else {
+                        return .error(
+                            "Noctweb namespace policy changed during admission.",
+                            code: .unavailable,
+                            retryable: true,
+                            respondingTo: request
+                        )
+                    }
+                    return applyClaim()
+                }.flatMapError { error in
+                    if case FederationAdmissionError.busy = error {
+                        return failure(
+                            "Noctweb namespace membership verification is busy.",
+                            code: .rateLimited,
+                            retryable: true
+                        )
+                    }
+                    return failure(
+                        "Noctweb namespace membership verification is unavailable.",
+                        code: .unavailable,
+                        retryable: true
+                    )
+                }
+            }
+            return context.eventLoop.makeSucceededFuture(applyClaim())
         case .rotateNoctwebNamespace(let rotationRequest):
             guard rotationRequest.newIdentity.claim.federationMode
                     == relayConfiguration.federation.mode,
@@ -613,12 +676,22 @@ final class RelayHandler: ChannelInboundHandler {
                 expectedRelayID: forwarding.destinationRelayID,
                 requiredModule: "nw.federation-forward",
                 allowedKinds: [.standard],
+                configuration: relayConfiguration,
                 on: eventLoop
-            ).flatMap { _ in
+            ).flatMap { peer in
+                guard self.currentRelayConfiguration == relayConfiguration else {
+                    return failure(
+                        "Federation policy changed during forwarding admission.",
+                        code: .unavailable,
+                        retryable: true
+                    )
+                }
                 do {
                     let sourceIdentity = try self.relayIdentityRuntime.signedIdentity(
-                        configuration: self.relayConfiguration,
-                        advertisedEndpoints: self.advertisedIdentityEndpoints(),
+                        configuration: relayConfiguration,
+                        advertisedEndpoints: self.advertisedIdentityEndpoints(
+                            configuration: relayConfiguration
+                        ),
                         hostSigningPublicKey: self.netHostStore?.signingPublicKey
                     )
                     let delivery = try FederatedOpaqueRouteDeliveryV1.signed(
@@ -629,7 +702,7 @@ final class RelayHandler: ChannelInboundHandler {
                     )
                     return self.sendRequest(
                         .deliverOpaqueRouteV1(delivery),
-                        to: forwarding.destination,
+                        to: peer.endpoint,
                         on: eventLoop
                     ).map { response in
                         if case .opaqueRouteAppend(let receipt)? = response.successBody {
@@ -682,12 +755,21 @@ final class RelayHandler: ChannelInboundHandler {
                 delivery.sourceIdentity,
                 requiredModule: "nw.federation-forward",
                 allowedKinds: [.standard],
+                configuration: relayConfiguration,
                 on: context.eventLoop
             ).map { allowed in
                 guard allowed else {
                     return RelayResponse.error(
                         "Federation source is not an authenticated member.",
                         code: .authenticationRequired,
+                        respondingTo: request
+                    )
+                }
+                guard self.currentRelayConfiguration == relayConfiguration else {
+                    return RelayResponse.error(
+                        "Federation policy changed during delivery admission.",
+                        code: .unavailable,
+                        retryable: true,
                         respondingTo: request
                     )
                 }
@@ -1170,15 +1252,23 @@ final class RelayHandler: ChannelInboundHandler {
                 expectedRelayID: read.destinationRelayID,
                 requiredModule: "nw.net-host",
                 allowedKinds: [.standard, .host],
+                configuration: relayConfiguration,
                 on: eventLoop
-            ).flatMap { destinationInfo in
-                self.sendRequest(
+            ).flatMap { peer in
+                guard self.currentRelayConfiguration == relayConfiguration else {
+                    return failure(
+                        "Federation policy changed during retrieval admission.",
+                        code: .unavailable,
+                        retryable: true
+                    )
+                }
+                return self.sendRequest(
                     .getNetHostObject(read.request),
-                    to: read.destination,
+                    to: peer.endpoint,
                     on: eventLoop
                 ).map { response in
                     guard case .netHostObject(let object)? = response.successBody,
-                          let destinationIdentity = destinationInfo.relayIdentity else {
+                          let destinationIdentity = peer.info.relayIdentity else {
                         return self.forwardedRelayErrorResponse(
                             response,
                             respondingTo: request
@@ -1224,18 +1314,26 @@ final class RelayHandler: ChannelInboundHandler {
                 expectedRelayID: read.destinationRelayID,
                 requiredModule: "nw.net-host",
                 allowedKinds: [.standard, .host],
+                configuration: relayConfiguration,
                 on: eventLoop
-            ).flatMap { destinationInfo in
-                self.sendRequest(
+            ).flatMap { peer in
+                guard self.currentRelayConfiguration == relayConfiguration else {
+                    return failure(
+                        "Federation policy changed during retrieval admission.",
+                        code: .unavailable,
+                        retryable: true
+                    )
+                }
+                return self.sendRequest(
                     .resolveNetHostName(read.request),
-                    to: read.destination,
+                    to: peer.endpoint,
                     on: eventLoop
                 ).map { response in
                     guard case .netHostNameResolution(
                         let resolution
                     )? = response.successBody,
                     let destinationIdentity =
-                        destinationInfo.relayIdentity else {
+                        peer.info.relayIdentity else {
                         return self.forwardedRelayErrorResponse(
                             response,
                             respondingTo: request
@@ -1681,84 +1779,460 @@ final class RelayHandler: ChannelInboundHandler {
         }
     }
 
+    private func configuredManualCandidates(
+        matching advertisedEndpoints: [RelayEndpoint],
+        configuration: RelayConfiguration
+    ) -> [RelayEndpoint] {
+        let advertisedKeys = Set(advertisedEndpoints.map(federationEndpointKey))
+        var candidates: [RelayEndpoint] = []
+        for configured in configuration.federationAllowList {
+            let key = federationEndpointKey(configured)
+            guard advertisedKeys.contains(key) else { continue }
+            if let existing = candidates.first(where: {
+                federationEndpointKey($0) == key
+            }) {
+                // Conflicting trust attributes for one endpoint fail closed.
+                guard existing == configured else { return [] }
+                continue
+            }
+            candidates.append(configured)
+        }
+        return candidates
+    }
+
+    private func firstLiveMatchingFederationEndpoint(
+        _ candidates: ArraySlice<RelayEndpoint>,
+        identity: SignedRelayIdentityClaimV1,
+        configuration: RelayConfiguration,
+        requiredModule: String?,
+        allowedKinds: Set<RelayKind>?,
+        on eventLoop: EventLoop
+    ) -> EventLoopFuture<RelayEndpoint?> {
+        guard let candidate = candidates.first else {
+            return eventLoop.makeSucceededFuture(nil)
+        }
+        guard permitsFederationTransport(
+            candidate,
+            configuration: configuration
+        ) else {
+            return firstLiveMatchingFederationEndpoint(
+                candidates.dropFirst(),
+                identity: identity,
+                configuration: configuration,
+                requiredModule: requiredModule,
+                allowedKinds: allowedKinds,
+                on: eventLoop
+            )
+        }
+        return fetchRelayInfo(from: candidate, on: eventLoop)
+            .map { info in
+                guard let info,
+                      info.isStructurallyValid,
+                      info.kind == identity.claim.relayKind,
+                      allowedKinds.map({ $0.contains(info.kind) }) ?? true,
+                      self.sameFederationDomain(
+                        info.federation,
+                        configuration.federation
+                      ),
+                      requiredModule.map({ module in
+                        info.protocolCapabilities?.supports(
+                            module: module, version: 1
+                        ) == true
+                      }) ?? true,
+                      let live = info.relayIdentity,
+                      live.claim.relayID == identity.claim.relayID,
+                      live.claim.signingPublicKey
+                        == identity.claim.signingPublicKey,
+                      live.claim.noctwebSuffix
+                        == identity.claim.noctwebSuffix,
+                      live.claim.advertisedEndpoints.contains(where: {
+                        self.federationEndpointKey($0)
+                            == self.federationEndpointKey(candidate)
+                      }),
+                      (try? live.verifyThrowing(at: Date())) == true else {
+                    return false
+                }
+                return true
+            }.flatMapError { _ in
+                eventLoop.makeSucceededFuture(false)
+            }.flatMap { matched in
+                if matched {
+                    return eventLoop.makeSucceededFuture(candidate)
+                }
+                return self.firstLiveMatchingFederationEndpoint(
+                    candidates.dropFirst(),
+                    identity: identity,
+                    configuration: configuration,
+                    requiredModule: requiredModule,
+                    allowedKinds: allowedKinds,
+                    on: eventLoop
+                )
+            }
+    }
+
+    private func isAdmittedNamespaceClaim(
+        _ identity: SignedRelayIdentityClaimV1,
+        configuration: RelayConfiguration,
+        on eventLoop: EventLoop
+    ) -> EventLoopFuture<Bool> {
+        guard let suffix = identity.claim.noctwebSuffix,
+              identity.claim.federationMode == configuration.federation.mode,
+              identity.claim.federationName == configuration.federation.name else {
+            return eventLoop.makeSucceededFuture(false)
+        }
+        do {
+            guard try identity.verifyThrowing(at: Date()) else {
+                return eventLoop.makeSucceededFuture(false)
+            }
+        } catch {
+            return eventLoop.makeFailedFuture(error)
+        }
+        if identity.claim.relayID == relayIdentityRuntime.relayID,
+           identity.claim.signingPublicKey
+                == relayIdentityRuntime.keyMaterial.signingPublicKey,
+           suffix == configuration.noctwebRelaySuffix {
+            return eventLoop.makeSucceededFuture(true)
+        }
+
+        let limiter = FederationAdmissionLimiter.shared
+        guard limiter.tryAcquire() else {
+            return eventLoop.makeFailedFuture(FederationAdmissionError.busy)
+        }
+        let endpoints: EventLoopFuture<[RelayEndpoint]>
+        switch configuration.federation.mode {
+        case .manual:
+            endpoints = eventLoop.makeSucceededFuture(
+                configuredManualCandidates(
+                    matching: identity.claim.advertisedEndpoints,
+                    configuration: configuration
+                )
+            )
+        case .curated:
+            let request = ListFederationNodesRequest(
+                mode: .curated,
+                federationName: configuration.federation.name,
+                onlyHealthy: true,
+                maxStalenessSeconds:
+                    configuration.coordinatorDirectoryMaxStalenessSeconds,
+                requireSignedSnapshot: true
+            )
+            let coordinators = configuration.federationCoordinatorEndpoints ?? []
+            var seen = Set<String>()
+            let distinct = coordinators.filter {
+                seen.insert(federationEndpointKey($0)).inserted
+            }
+            guard distinct.count >= configuration.curatedCoordinatorQuorum else {
+                limiter.release()
+                return eventLoop.makeSucceededFuture(false)
+            }
+            let futures = distinct.map { coordinator in
+                fetchValidatedCoordinatorNodes(
+                    from: coordinator,
+                    request: request,
+                    on: eventLoop
+                ).map { nodes in
+                    ValidatedCoordinatorDirectory(
+                        nodes: nodes,
+                        signingPublicKey: self.store.pinnedCoordinatorPublicKey(
+                            for: coordinator
+                        )
+                    )
+                }.flatMapError { _ in
+                    eventLoop.makeSucceededFuture(
+                        ValidatedCoordinatorDirectory(
+                            nodes: [], signingPublicKey: nil
+                        )
+                    )
+                }
+            }
+            endpoints = EventLoopFuture.whenAllSucceed(
+                futures,
+                on: eventLoop
+            ).map { directories in
+                identity.claim.advertisedEndpoints.filter { advertised in
+                    var signingKeys = Set<Data>()
+                    for directory in directories {
+                        guard let key = directory.signingPublicKey,
+                              directory.nodes.contains(where: { record in
+                            guard let listed = record.relayInfo.relayIdentity
+                            else { return false }
+                            return self.federationEndpointKey(record.endpoint)
+                                    == self.federationEndpointKey(advertised)
+                                && listed.claim.relayID
+                                    == identity.claim.relayID
+                                && listed.claim.signingPublicKey
+                                    == identity.claim.signingPublicKey
+                                && listed.claim.noctwebSuffix == suffix
+                                && (try? listed.verifyThrowing(at: Date())) == true
+                        }) else { continue }
+                        signingKeys.insert(key)
+                    }
+                    return signingKeys.count
+                        >= configuration.curatedCoordinatorQuorum
+                }
+            }
+        case .solo:
+            limiter.release()
+            return eventLoop.makeSucceededFuture(false)
+        case .open:
+            limiter.release()
+            return eventLoop.makeSucceededFuture(true)
+        }
+
+        let result = endpoints.flatMap { candidates in
+            self.firstLiveMatchingFederationEndpoint(
+                candidates[...],
+                identity: identity,
+                configuration: configuration,
+                requiredModule: nil,
+                allowedKinds: nil,
+                on: eventLoop
+            ).map { $0 != nil }
+        }
+        result.whenComplete { _ in
+            limiter.release()
+        }
+        return result
+    }
+
+    private func curatedOutboundEndorsement(
+        destination: RelayEndpoint,
+        expectedRelayID: RelayIdentityIDV1,
+        requiredModule: String,
+        allowedKinds: Set<RelayKind>,
+        configuration: RelayConfiguration,
+        on eventLoop: EventLoop
+    ) -> EventLoopFuture<CuratedOutboundEndorsement?> {
+        let coordinators = configuration.federationCoordinatorEndpoints ?? []
+        var seen = Set<String>()
+        let distinct = coordinators.filter {
+            seen.insert(federationEndpointKey($0)).inserted
+        }
+        guard distinct.count >= configuration.curatedCoordinatorQuorum else {
+            return eventLoop.makeSucceededFuture(nil)
+        }
+        let limiter = FederationAdmissionLimiter.shared
+        guard limiter.tryAcquire() else {
+            return eventLoop.makeFailedFuture(FederationAdmissionError.busy)
+        }
+        let request = ListFederationNodesRequest(
+            mode: .curated,
+            federationName: configuration.federation.name,
+            onlyHealthy: true,
+            maxStalenessSeconds:
+                configuration.coordinatorDirectoryMaxStalenessSeconds,
+            requireSignedSnapshot: true
+        )
+        let futures = distinct.map { coordinator in
+            fetchValidatedCoordinatorNodes(
+                from: coordinator,
+                request: request,
+                on: eventLoop
+            ).map { nodes in
+                ValidatedCoordinatorDirectory(
+                    nodes: nodes,
+                    signingPublicKey: self.store.pinnedCoordinatorPublicKey(
+                        for: coordinator
+                    )
+                )
+            }.flatMapError { _ in
+                eventLoop.makeSucceededFuture(
+                    ValidatedCoordinatorDirectory(
+                        nodes: [], signingPublicKey: nil
+                    )
+                )
+            }
+        }
+        let result = EventLoopFuture.whenAllSucceed(
+            futures,
+            on: eventLoop
+        ).map { directories -> CuratedOutboundEndorsement? in
+            var matches: [(
+                endpoint: RelayEndpoint,
+                identity: SignedRelayIdentityClaimV1,
+                coordinatorKey: Data
+            )] = []
+            for directory in directories {
+                guard let coordinatorKey = directory.signingPublicKey else {
+                    continue
+                }
+                for record in directory.nodes {
+                    let info = record.relayInfo
+                    guard self.federationEndpointKey(record.endpoint)
+                            == self.federationEndpointKey(destination),
+                          self.permitsFederationTransport(
+                            record.endpoint,
+                            configuration: configuration
+                          ),
+                          info.isStructurallyValid,
+                          self.sameFederationDomain(
+                            info.federation,
+                            configuration.federation
+                          ),
+                          allowedKinds.contains(info.kind),
+                          info.protocolCapabilities?.supports(
+                            module: requiredModule,
+                            version: 1
+                          ) == true,
+                          let identity = info.relayIdentity,
+                          identity.claim.relayID == expectedRelayID,
+                          identity.claim.relayKind == info.kind,
+                          identity.claim.advertisedEndpoints.contains(where: {
+                            self.federationEndpointKey($0)
+                                == self.federationEndpointKey(record.endpoint)
+                          }),
+                          (try? identity.verifyThrowing(at: Date())) == true
+                    else { continue }
+                    matches.append((
+                        endpoint: record.endpoint,
+                        identity: identity,
+                        coordinatorKey: coordinatorKey
+                    ))
+                }
+            }
+            guard let first = matches.first,
+                  matches.allSatisfy({ match in
+                    match.endpoint == first.endpoint
+                        && match.identity.claim.signingPublicKey
+                            == first.identity.claim.signingPublicKey
+                        && match.identity.claim.noctwebSuffix
+                            == first.identity.claim.noctwebSuffix
+                  }),
+                  Set(matches.map(\.coordinatorKey)).count
+                    >= configuration.curatedCoordinatorQuorum else {
+                return nil
+            }
+            return CuratedOutboundEndorsement(
+                endpoint: first.endpoint,
+                identity: first.identity
+            )
+        }
+        result.whenComplete { _ in limiter.release() }
+        return result
+    }
+
     private func authenticatedFederationPeer(
         destination: RelayEndpoint,
         expectedRelayID: RelayIdentityIDV1,
         requiredModule: String,
         allowedKinds: Set<RelayKind>,
+        configuration: RelayConfiguration,
         on eventLoop: EventLoop
-    ) -> EventLoopFuture<RelayInfo> {
-        guard permitsFederationTransport(destination) else {
+    ) -> EventLoopFuture<AuthenticatedFederationPeer> {
+        guard configuration.federation.mode != .solo,
+              destination.tlsCertificateFingerprintSHA256 == nil,
+              permitsFederationTransport(
+                destination,
+                configuration: configuration
+              ) else {
             return eventLoop.makeFailedFuture(
                 RelayForwardHTTPError.destinationRejected
             )
         }
-        return federationMembershipRecord(
-            destination: destination,
-            on: eventLoop
-        ).flatMap { membership in
-            self.fetchRelayInfo(from: destination, on: eventLoop).flatMapThrowing {
-                liveInfo in
-                guard let liveInfo,
-                      try self.isValidFederationPeerInfo(
-                          liveInfo,
-                          endpoint: destination,
-                          expectedRelayID: expectedRelayID,
-                          requiredModule: requiredModule,
-                          allowedKinds: allowedKinds
-                      ) else {
-                    throw RelayForwardHTTPError.destinationRejected
-                }
-                if let membership {
-                    guard let listedIdentity = membership.relayInfo.relayIdentity,
-                          try listedIdentity.verifyThrowing(at: Date()),
-                          listedIdentity.claim.relayID == expectedRelayID,
-                          listedIdentity.claim.signingPublicKey
-                            == liveInfo.relayIdentity?.claim.signingPublicKey else {
-                        throw RelayForwardHTTPError.destinationRejected
-                    }
-                }
-                return liveInfo
-            }
-        }
-    }
-
-    private func federationMembershipRecord(
-        destination: RelayEndpoint,
-        on eventLoop: EventLoop
-    ) -> EventLoopFuture<FederationNodeRecord?> {
-        guard relayConfiguration.federation.mode != .solo else {
-            return eventLoop.makeFailedFuture(
-                RelayForwardHTTPError.destinationRejected
-            )
-        }
-        if relayConfiguration.federation.mode == .manual {
-            guard relayConfiguration.federationAllowList.contains(where: {
-                federationEndpointKey($0) == federationEndpointKey(destination)
-            }) else {
+        let endpoint: EventLoopFuture<(
+            RelayEndpoint, SignedRelayIdentityClaimV1?
+        )>
+        if configuration.federation.mode == .manual {
+            guard let configured = configuredManualCandidates(
+                matching: [destination],
+                configuration: configuration
+            ).first else {
                 return eventLoop.makeFailedFuture(
                     RelayForwardHTTPError.destinationRejected
                 )
             }
-            return eventLoop.makeSucceededFuture(nil)
-        }
-        return fetchCoordinatorNodeDirectory(
-            request: ListFederationNodesRequest(
-                mode: relayConfiguration.federation.mode,
-                federationName: relayConfiguration.federation.name,
-                onlyHealthy: true,
-                maxStalenessSeconds: relayConfiguration.coordinatorDirectoryMaxStalenessSeconds,
-                requireSignedSnapshot: true
-            ),
-            on: eventLoop
-        ).flatMapThrowing { nodes in
-            guard let record = nodes.first(where: {
-                self.federationEndpointKey($0.endpoint)
-                    == self.federationEndpointKey(destination)
-            }) else {
-                throw RelayForwardHTTPError.destinationRejected
+            endpoint = eventLoop.makeSucceededFuture((configured, nil))
+        } else if configuration.federation.mode == .curated {
+            endpoint = curatedOutboundEndorsement(
+                destination: destination,
+                expectedRelayID: expectedRelayID,
+                requiredModule: requiredModule,
+                allowedKinds: allowedKinds,
+                configuration: configuration,
+                on: eventLoop
+            ).flatMapThrowing { endorsement in
+                guard let endorsement else {
+                    throw RelayForwardHTTPError.destinationRejected
+                }
+                return (endorsement.endpoint, endorsement.identity)
             }
-            return record
+        } else {
+            endpoint = eventLoop.makeSucceededFuture((destination, nil))
+        }
+        return endpoint.flatMap { transportEndpoint, endorsedIdentity in
+            guard self.currentRelayConfiguration == configuration else {
+                return eventLoop.makeFailedFuture(
+                    RelayForwardHTTPError.destinationRejected
+                )
+            }
+            return self.fetchRelayInfo(
+                from: transportEndpoint,
+                on: eventLoop
+            ).flatMap {
+            liveInfo in
+            do {
+                guard let liveInfo,
+                      let liveIdentity = liveInfo.relayIdentity,
+                      try self.isValidFederationPeerInfo(
+                        liveInfo,
+                        endpoint: transportEndpoint,
+                        expectedRelayID: expectedRelayID,
+                        requiredModule: requiredModule,
+                        allowedKinds: allowedKinds,
+                        configuration: configuration
+                      ) else {
+                    throw RelayForwardHTTPError.destinationRejected
+                }
+                if configuration.federation.mode == .manual {
+                    guard self.currentRelayConfiguration == configuration else {
+                        throw RelayForwardHTTPError.destinationRejected
+                    }
+                    return eventLoop.makeSucceededFuture(
+                        AuthenticatedFederationPeer(
+                            info: liveInfo,
+                            endpoint: transportEndpoint
+                        )
+                    )
+                }
+                if configuration.federation.mode == .curated {
+                    guard let endorsedIdentity,
+                          endorsedIdentity.claim.relayID
+                            == liveIdentity.claim.relayID,
+                          endorsedIdentity.claim.signingPublicKey
+                            == liveIdentity.claim.signingPublicKey,
+                          endorsedIdentity.claim.noctwebSuffix
+                            == liveIdentity.claim.noctwebSuffix,
+                          self.currentRelayConfiguration == configuration else {
+                        throw RelayForwardHTTPError.destinationRejected
+                    }
+                    return eventLoop.makeSucceededFuture(
+                        AuthenticatedFederationPeer(
+                            info: liveInfo,
+                            endpoint: transportEndpoint
+                        )
+                    )
+                }
+                return self.isAuthenticatedFederationMember(
+                    liveIdentity,
+                    requiredModule: requiredModule,
+                    allowedKinds: allowedKinds,
+                    configuration: configuration,
+                    requiredEndpoint: destination,
+                    on: eventLoop
+                ).flatMapThrowing { admitted in
+                    guard admitted,
+                          self.currentRelayConfiguration == configuration else {
+                        throw RelayForwardHTTPError.destinationRejected
+                    }
+                    return AuthenticatedFederationPeer(
+                        info: liveInfo,
+                        endpoint: transportEndpoint
+                    )
+                }
+            } catch {
+                return eventLoop.makeFailedFuture(error)
+            }
+            }
         }
     }
 
@@ -1766,37 +2240,148 @@ final class RelayHandler: ChannelInboundHandler {
         _ identity: SignedRelayIdentityClaimV1,
         requiredModule: String,
         allowedKinds: Set<RelayKind>,
+        configuration: RelayConfiguration,
+        requiredEndpoint: RelayEndpoint? = nil,
         on eventLoop: EventLoop
     ) -> EventLoopFuture<Bool> {
         do {
             guard try identity.verifyThrowing(at: Date()),
                   allowedKinds.contains(identity.claim.relayKind),
                   identity.claim.federationMode
-                    == relayConfiguration.federation.mode,
+                    == configuration.federation.mode,
                   identity.claim.federationName
-                    == relayConfiguration.federation.name else {
+                    == configuration.federation.name else {
                 return eventLoop.makeSucceededFuture(false)
             }
         } catch {
             return eventLoop.makeFailedFuture(error)
         }
-        if relayConfiguration.federation.mode == .manual {
-            let allowed = identity.claim.advertisedEndpoints.contains { advertised in
-                relayConfiguration.federationAllowList.contains {
-                    federationEndpointKey($0) == federationEndpointKey(advertised)
+        let advertisedCandidates = identity.claim.advertisedEndpoints.filter {
+            advertised in
+            guard let requiredEndpoint else { return true }
+            return federationEndpointKey(advertised)
+                == federationEndpointKey(requiredEndpoint)
+        }
+        if configuration.federation.mode == .manual {
+            let candidates = configuredManualCandidates(
+                matching: advertisedCandidates,
+                configuration: configuration
+            )
+            guard !candidates.isEmpty else {
+                return eventLoop.makeSucceededFuture(false)
+            }
+            let limiter = FederationAdmissionLimiter.shared
+            guard limiter.tryAcquire() else {
+                return eventLoop.makeFailedFuture(FederationAdmissionError.busy)
+            }
+            let result = firstLiveMatchingFederationEndpoint(
+                candidates[...],
+                identity: identity,
+                configuration: configuration,
+                requiredModule: requiredModule,
+                allowedKinds: allowedKinds,
+                on: eventLoop
+            ).map { $0 != nil }
+            result.whenComplete { _ in limiter.release() }
+            return result
+        }
+        if configuration.federation.mode == .curated {
+            let coordinators = configuration.federationCoordinatorEndpoints ?? []
+            var seen = Set<String>()
+            let distinct = coordinators.filter {
+                seen.insert(federationEndpointKey($0)).inserted
+            }
+            guard distinct.count >= configuration.curatedCoordinatorQuorum else {
+                return eventLoop.makeSucceededFuture(false)
+            }
+            let limiter = FederationAdmissionLimiter.shared
+            guard limiter.tryAcquire() else {
+                return eventLoop.makeFailedFuture(FederationAdmissionError.busy)
+            }
+            let request = ListFederationNodesRequest(
+                mode: .curated,
+                federationName: configuration.federation.name,
+                onlyHealthy: true,
+                maxStalenessSeconds:
+                    configuration.coordinatorDirectoryMaxStalenessSeconds,
+                requireSignedSnapshot: true
+            )
+            let futures = distinct.map { coordinator in
+                fetchValidatedCoordinatorNodes(
+                    from: coordinator,
+                    request: request,
+                    on: eventLoop
+                ).map { nodes in
+                    ValidatedCoordinatorDirectory(
+                        nodes: nodes,
+                        signingPublicKey: self.store.pinnedCoordinatorPublicKey(
+                            for: coordinator
+                        )
+                    )
+                }.flatMapError { _ in
+                    eventLoop.makeSucceededFuture(
+                        ValidatedCoordinatorDirectory(
+                            nodes: [], signingPublicKey: nil
+                        )
+                    )
                 }
             }
-            return eventLoop.makeSucceededFuture(allowed)
+            let result = EventLoopFuture.whenAllSucceed(
+                futures,
+                on: eventLoop
+            ).map { directories in
+                advertisedCandidates.contains { advertised in
+                    var signingKeys = Set<Data>()
+                    for directory in directories {
+                        guard let key = directory.signingPublicKey,
+                              directory.nodes.contains(where: { record in
+                            let info = record.relayInfo
+                            guard let listed = info.relayIdentity else {
+                                return false
+                            }
+                            return self.federationEndpointKey(record.endpoint)
+                                    == self.federationEndpointKey(advertised)
+                                && info.isStructurallyValid
+                                && self.sameFederationDomain(
+                                    info.federation,
+                                    configuration.federation
+                                )
+                                && allowedKinds.contains(info.kind)
+                                && info.protocolCapabilities?.supports(
+                                    module: requiredModule,
+                                    version: 1
+                                ) == true
+                                && listed.claim.relayID
+                                    == identity.claim.relayID
+                                && listed.claim.signingPublicKey
+                                    == identity.claim.signingPublicKey
+                                && listed.claim.noctwebSuffix
+                                    == identity.claim.noctwebSuffix
+                                && listed.claim.advertisedEndpoints.contains {
+                                    self.federationEndpointKey($0)
+                                        == self.federationEndpointKey(advertised)
+                                }
+                                && (try? listed.verifyThrowing(at: Date())) == true
+                        }) else { continue }
+                        signingKeys.insert(key)
+                    }
+                    return signingKeys.count
+                        >= configuration.curatedCoordinatorQuorum
+                }
+            }
+            result.whenComplete { _ in limiter.release() }
+            return result
         }
         return fetchCoordinatorNodeDirectory(
             request: ListFederationNodesRequest(
-                mode: relayConfiguration.federation.mode,
-                federationName: relayConfiguration.federation.name,
+                mode: configuration.federation.mode,
+                federationName: configuration.federation.name,
                 onlyHealthy: true,
-                maxStalenessSeconds: relayConfiguration.coordinatorDirectoryMaxStalenessSeconds,
+                maxStalenessSeconds: configuration.coordinatorDirectoryMaxStalenessSeconds,
                 requireSignedSnapshot: true
             ),
-            on: eventLoop
+            on: eventLoop,
+            configuration: configuration
         ).map { records in
             records.contains { record in
                 guard let listedIdentity = record.relayInfo.relayIdentity,
@@ -1809,7 +2394,7 @@ final class RelayHandler: ChannelInboundHandler {
                       ) == true else {
                     return false
                 }
-                return identity.claim.advertisedEndpoints.contains {
+                return advertisedCandidates.contains {
                     self.federationEndpointKey($0)
                         == self.federationEndpointKey(record.endpoint)
                 }
@@ -1822,11 +2407,14 @@ final class RelayHandler: ChannelInboundHandler {
         endpoint: RelayEndpoint,
         expectedRelayID: RelayIdentityIDV1,
         requiredModule: String,
-        allowedKinds: Set<RelayKind>
+        allowedKinds: Set<RelayKind>,
+        configuration: RelayConfiguration
     ) throws -> Bool {
         guard allowedKinds.contains(info.kind),
-              info.federation.mode == relayConfiguration.federation.mode,
-              info.federation.name == relayConfiguration.federation.name,
+              sameFederationDomain(
+                info.federation,
+                configuration.federation
+              ),
               info.protocolCapabilities?.supports(
                   module: requiredModule,
                   version: 1
@@ -1843,6 +2431,16 @@ final class RelayHandler: ChannelInboundHandler {
     }
 
     private func permitsFederationTransport(_ endpoint: RelayEndpoint) -> Bool {
+        permitsFederationTransport(
+            endpoint,
+            configuration: relayConfiguration
+        )
+    }
+
+    private func permitsFederationTransport(
+        _ endpoint: RelayEndpoint,
+        configuration: RelayConfiguration
+    ) -> Bool {
         if endpoint.useTLS { return true }
         let host = endpoint.host
             .trimmingCharacters(in: .whitespacesAndNewlines)
@@ -1852,12 +2450,14 @@ final class RelayHandler: ChannelInboundHandler {
             || host == "localhost" {
             return true
         }
-        return relayConfiguration.allowPrivateFederationEndpoints
+        return configuration.allowPrivateFederationEndpoints
             && PublicRelayEndpointPolicy.permitsPrivate(endpoint)
     }
 
-    private func advertisedIdentityEndpoints() -> [RelayEndpoint] {
-        if let advertised = relayConfiguration.advertisedEndpoint {
+    private func advertisedIdentityEndpoints(
+        configuration: RelayConfiguration? = nil
+    ) -> [RelayEndpoint] {
+        if let advertised = (configuration ?? relayConfiguration).advertisedEndpoint {
             return [advertised]
         }
         guard let localEndpoint else { return [] }
@@ -2003,10 +2603,13 @@ final class RelayHandler: ChannelInboundHandler {
         return nil
     }
 
-    private func coordinatorEndpoints() -> [RelayEndpoint] {
-        let endpoints = relayConfiguration.federation.mode == .manual
-            ? relayConfiguration.federationAllowList
-            : relayConfiguration.federationCoordinatorEndpoints ?? []
+    private func coordinatorEndpoints(
+        configuration: RelayConfiguration? = nil
+    ) -> [RelayEndpoint] {
+        let configuration = configuration ?? relayConfiguration
+        let endpoints = configuration.federation.mode == .manual
+            ? configuration.federationAllowList
+            : configuration.federationCoordinatorEndpoints ?? []
         var seen = Set<String>()
         return endpoints.filter { endpoint in
             !endpoint.host.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
@@ -2016,6 +2619,13 @@ final class RelayHandler: ChannelInboundHandler {
 
     private func federationEndpointKey(_ endpoint: RelayEndpoint) -> String {
         "\(endpoint.host.lowercased()):\(endpoint.port):\(endpoint.useTLS ? 1 : 0):\(endpoint.transport.rawValue)"
+    }
+
+    private func sameFederationDomain(
+        _ lhs: FederationDescriptor,
+        _ rhs: FederationDescriptor
+    ) -> Bool {
+        lhs.mode == rhs.mode && lhs.name == rhs.name
     }
 
     private func coordinatorHeartbeatInterval() -> TimeInterval {
@@ -2104,19 +2714,21 @@ final class RelayHandler: ChannelInboundHandler {
 
     private func fetchCoordinatorNodeDirectory(
         request: ListFederationNodesRequest,
-        on eventLoop: EventLoop
+        on eventLoop: EventLoop,
+        configuration: RelayConfiguration? = nil
     ) -> EventLoopFuture<[FederationNodeRecord]> {
-        let coordinators = coordinatorEndpoints()
+        let configuration = configuration ?? relayConfiguration
+        let coordinators = coordinatorEndpoints(configuration: configuration)
         guard !coordinators.isEmpty else {
             return eventLoop.makeSucceededFuture([])
         }
-        let maxStaleness = max(30, request.maxStalenessSeconds ?? relayConfiguration.coordinatorDirectoryMaxStalenessSeconds ?? 300)
+        let maxStaleness = max(30, request.maxStalenessSeconds ?? configuration.coordinatorDirectoryMaxStalenessSeconds ?? 300)
         let effectiveRequest = ListFederationNodesRequest(
-            mode: request.mode ?? relayConfiguration.federation.mode,
-            federationName: request.federationName ?? relayConfiguration.federation.name,
+            mode: request.mode ?? configuration.federation.mode,
+            federationName: request.federationName ?? configuration.federation.name,
             onlyHealthy: request.onlyHealthy ?? true,
             maxStalenessSeconds: maxStaleness,
-            requireSignedSnapshot: request.requireSignedSnapshot ?? relayConfiguration.curatedRequireSignedDirectory
+            requireSignedSnapshot: request.requireSignedSnapshot ?? configuration.curatedRequireSignedDirectory
         )
         let futures: [EventLoopFuture<[FederationNodeRecord]>] = coordinators.map { coordinator in
             fetchValidatedCoordinatorNodes(from: coordinator, request: effectiveRequest, on: eventLoop)
@@ -2160,19 +2772,27 @@ final class RelayHandler: ChannelInboundHandler {
             }
             let advertisedPublicKey = relayInfo.federationDirectoryPublicKey
             let pinnedPublicKey = self.store.pinnedCoordinatorPublicKey(for: coordinator)
+            let configuredPublicKey = coordinator.directorySigningPublicKey
+            if let configuredPublicKey, let pinnedPublicKey,
+               configuredPublicKey != pinnedPublicKey {
+                return eventLoop.makeFailedFuture(
+                    FederationDirectoryValidationError.invalidSnapshot
+                )
+            }
             if let advertisedPublicKey {
-                if let pinnedPublicKey, pinnedPublicKey != advertisedPublicKey {
+                if let configuredPublicKey,
+                   configuredPublicKey != advertisedPublicKey {
+                    return eventLoop.makeFailedFuture(
+                        FederationDirectoryValidationError.invalidSnapshot
+                    )
+                }
+                if let pinnedPublicKey,
+                   pinnedPublicKey != advertisedPublicKey {
                     return eventLoop.makeFailedFuture(FederationDirectoryValidationError.invalidSnapshot)
                 }
-                if pinnedPublicKey == nil {
-                    do {
-                        try self.store.pinCoordinatorPublicKey(advertisedPublicKey, for: coordinator)
-                    } catch {
-                        return eventLoop.makeFailedFuture(error)
-                    }
-                }
             }
-            let trustedPublicKey = pinnedPublicKey ?? advertisedPublicKey
+            let trustedPublicKey = configuredPublicKey
+                ?? pinnedPublicKey ?? advertisedPublicKey
             if request.mode == .manual {
                 guard relayInfo.kind == .standard,
                       relayInfo.federation.mode == .manual else {
@@ -2210,6 +2830,21 @@ final class RelayHandler: ChannelInboundHandler {
                     )
                 ])
             }
+            guard relayInfo.isStructurallyValid,
+                  relayInfo.kind == .coordinator,
+                  request.mode.map({ relayInfo.federation.mode == $0 }) ?? true else {
+                return eventLoop.makeFailedFuture(
+                    FederationDirectoryValidationError.invalidSnapshot
+                )
+            }
+            if let expectedName = request.federationName?
+                .trimmingCharacters(in: .whitespacesAndNewlines),
+               !expectedName.isEmpty,
+               relayInfo.federation.name != expectedName {
+                return eventLoop.makeFailedFuture(
+                    FederationDirectoryValidationError.invalidSnapshot
+                )
+            }
             return self.sendRequest(.listFederationNodes(request), to: coordinator, on: eventLoop).flatMapThrowing { response in
                 guard case .federationNodes(let directory)? = response.successBody else {
                     return []
@@ -2217,11 +2852,20 @@ final class RelayHandler: ChannelInboundHandler {
                 if request.requireSignedSnapshot == true, trustedPublicKey == nil {
                     throw FederationDirectoryValidationError.invalidSnapshot
                 }
-                return try self.validatedCoordinatorNodes(
+                let nodes = try self.validatedCoordinatorNodes(
                     directory: directory,
                     request: request,
                     trustedPublicKey: trustedPublicKey
                 )
+                if pinnedPublicKey == nil,
+                   let trustedPublicKey,
+                   directory.snapshot?.signature != nil {
+                    try self.store.pinCoordinatorPublicKey(
+                        trustedPublicKey,
+                        for: coordinator
+                    )
+                }
+                return nodes
             }
         }
     }
@@ -2449,6 +3093,13 @@ final class RelayHandler: ChannelInboundHandler {
         to endpoint: RelayEndpoint,
         on eventLoop: EventLoop
     ) -> EventLoopFuture<RelayResponse> {
+        // The outbound transports do not expose a verified leaf certificate.
+        // Refuse an explicit pin instead of silently dropping it.
+        guard endpoint.tlsCertificateFingerprintSHA256 == nil else {
+            return eventLoop.makeFailedFuture(
+                RelayForwardHTTPError.destinationRejected
+            )
+        }
         switch endpoint.transport {
         case .tcp:
             return sendRequestTCP(request, to: endpoint, on: eventLoop)
@@ -2569,6 +3220,7 @@ final class RelayHandler: ChannelInboundHandler {
             do {
                 guard endpoint.transport == .http,
                       endpoint.useTLS,
+                      endpoint.tlsCertificateFingerprintSHA256 == nil,
                       PublicRelayEndpointPolicy.permits(endpoint) else {
                     throw RelayForwardHTTPError.destinationRejected
                 }

@@ -1,0 +1,615 @@
+[
+  {
+    "verdict": "needs_validation",
+    "fingerprint": "noctweave/federation/curated-endpoint-anchor",
+    "title": "Curated forwarding can drop a coordinator-endorsed TLS pin",
+    "description": "The original Linux outbound path matched signed directory records to a caller destination by host, port, TLS flag, and transport, then fetched and forwarded to the caller endpoint object. A signed record could carry a TLS certificate fingerprint while the caller object omitted it. The analogous original Core path also probed the caller endpoint. Repaired focused tests preserve endorsed pins and prevent unpinned dispatch, but an original-source adversarial TLS network execution was not completed.",
+    "claimed_root_cause": "Authorization compared endpoint tuples without carrying the signed record's certificate trust field into the live probe and final connection.",
+    "trace": [
+      {
+        "kind": "entrypoint",
+        "file": "NoctweaveRelayServer/Sources/NoctweaveRelayServer/RelayHandler.swift",
+        "line": 611,
+        "scope": "Linux federation forwarding request",
+        "description": "A caller supplies a destination endpoint object."
+      },
+      {
+        "kind": "propagation",
+        "file": "NoctweaveRelayServer/Sources/NoctweaveRelayServer/RelayHandler.swift",
+        "line": 1755,
+        "scope": "Directory record match in the starting source",
+        "description": "The signed record is selected by endpoint tuple, without returning its full trust-bearing endpoint."
+      },
+      {
+        "kind": "sink",
+        "file": "NoctweaveRelayServer/Sources/NoctweaveRelayServer/RelayHandler.swift",
+        "line": 630,
+        "scope": "Original outbound send",
+        "description": "The delivery uses forwarding.destination rather than the signed record endpoint."
+      }
+    ],
+    "evidence": [
+      {
+        "file": "NoctweaveRelayServer/Sources/NoctweaveRelayServer/RelayHandler.swift",
+        "line": 1700,
+        "description": "The starting implementation also probed .info at the caller-supplied destination after tuple-only membership matching."
+      },
+      {
+        "file": "NoctweaveRelayServer/Tests/NoctweaveRelayServerTests/NoctweaveNetRelayTests.swift",
+        "line": 1205,
+        "description": "The repaired-tree loopback regression proves a pinned signed quorum prevents dispatch of an unpinned caller request to a previously reachable destination."
+      }
+    ],
+    "blockers": [
+      "No original-source TLS listener fixture demonstrated an actual unpinned connection after a signed pinned quorum.",
+      "No PKI-valid adversarial certificate, opaque route capability disclosure, or production federation effect was demonstrated."
+    ],
+    "validation_plan": {
+      "local": "Use two distinct signed local coordinator directories endorsing one pinned HTTPS endpoint, then send a forwarding request that supplies the same tuple without the fingerprint. Count destination accepts and compare original source with the repair using disposable route material.",
+      "deployment": "Verify the shipped Linux and Core transports consume the selected endorsed endpoint or fail closed on an explicit pin, then run a disposable federation integration fixture before deployment."
+    }
+  },
+  {
+    "verdict": "confirmed",
+    "fingerprint": "noctweave/federation/curated-quorum",
+    "title": "Merged coordinator directories bypass the configured curated quorum",
+    "description": "The Core and Linux relays merged individually signed coordinator directories before a federation membership decision. With quorum two, a peer listed by only one coordinator was accepted for incoming delivery and outgoing forwarding. Original Core fixture assertions also showed first namespace claims accepted without curated admission.",
+    "root_cause": "The merged directory retained records but discarded which distinct signing authorities endorsed each peer; initial claim routes had no membership gate at all.",
+    "intended_behavior": "For curated authorization, preserve each validated coordinator endorsement and require the configured number of distinct signing authorities. First claims and outbound I/O additionally check a live peer; incoming delivery verifies the signed source and directory endorsements.",
+    "trace": [
+      {
+        "kind": "entrypoint",
+        "file": "NoctweaveRelayServer/Sources/NoctweaveRelayServer/RelayHandler.swift",
+        "line": 656,
+        "scope": "Linux federation delivery",
+        "description": "A signed delivery selects an asserted source identity."
+      },
+      {
+        "kind": "propagation",
+        "file": "NoctweaveRelayServer/Sources/NoctweaveRelayServer/RelayHandler.swift",
+        "line": 1765,
+        "scope": "Linux membership check",
+        "description": "The original check searched a merged directory for one matching record."
+      },
+      {
+        "kind": "propagation",
+        "file": "NoctweaveRelayServer/Sources/NoctweaveRelayServer/RelayHandler.swift",
+        "line": 2105,
+        "scope": "Linux directory merge",
+        "description": "Records from configured coordinators were unioned without retaining endorsement count."
+      },
+      {
+        "kind": "sink",
+        "file": "NoctweaveRelayServer/Sources/NoctweaveRelayServer/RelayHandler.swift",
+        "line": 689,
+        "scope": "Linux opaque route append",
+        "description": "A single-record membership result let the request reach route storage."
+      }
+    ],
+    "evidence": [
+      {
+        "file": "NoctweaveRelayServer/Sources/NoctweaveRelayServer/RelayHandler.swift",
+        "line": 1765,
+        "description": "Original source returns membership success for a matching record in the union, regardless of configured quorum."
+      },
+      {
+        "file": "NoctweaveCore/Sources/NoctweaveCore/RelayServer.swift",
+        "line": 2148,
+        "description": "Original Core incoming member check has the same merged-record acceptance path."
+      }
+    ],
+    "conditions": [
+      {
+        "kind": "system_configuration",
+        "description": "Curated federation has coordinator quorum greater than one and at least one signed coordinator lists the candidate."
+      },
+      {
+        "kind": "authentication_level",
+        "description": "A valid route send capability remains necessary for a successful opaque append; the test used disposable capabilities."
+      },
+      {
+        "kind": "network_routing",
+        "description": "The bounded reproduction used local signed coordinator fixtures, not a production federation."
+      }
+    ],
+    "execution": {
+      "attacker_perspective": "A relay listed by only one coordinator can be treated as admitted despite the operator requiring two independent endorsements.",
+      "payloads": [
+        "One signed coordinator record for a dummy peer with configured quorum two; a second distinct coordinator is absent, then added as a positive control."
+      ],
+      "instructions": [
+        "Use disposable local relays/coordinators and a valid dummy route capability.",
+        "Compare first-claim, incoming-delivery, and outgoing-forward decisions before and after the second coordinator endorsement."
+      ],
+      "observed_result": "The isolated original Core source accepted and persisted a one-of-two claim and accepted incoming and outgoing route decisions; a separate coordinator-kind original-source test also persisted a one-vote claim. Patched Core rejects one-of-two and accepts two-of-two. Linux original source and repaired regressions establish the same membership boundary."
+    },
+    "remediation": {
+      "strategy": "Count endorsements from distinct validated coordinator signing keys before merging records; require a live matching peer and current policy at the final action."
+    },
+    "severity": {
+      "likelihood": {
+        "score": "medium",
+        "reason": "A coordinator must list the peer and the operator must configure a quorum above one."
+      },
+      "impact": {
+        "score": "medium",
+        "reason": "Configured federation admission is bypassed; route payloads remain end-to-end encrypted and append still requires a valid capability."
+      },
+      "overall_severity": "medium"
+    },
+    "confidence": {
+      "score": "high",
+      "reason": "Original merge and membership paths are source-complete; isolated prepatch Core failures include a coordinator-kind one-vote claim, and repaired signed one-of-two/two-of-two fixtures exercise the policy."
+    }
+  },
+  {
+    "verdict": "confirmed",
+    "fingerprint": "noctweave/federation/manual-identity",
+    "title": "Caller-signed endpoint claim impersonates an allowlisted manual relay",
+    "description": "Incoming federation delivery in both server implementations treated a self-signed source claim advertising an allowlisted endpoint as member identity, without binding the key to a live relay at that endpoint.",
+    "root_cause": "Manual admission compared a host/port tuple in the caller's signed claim to the operator allowlist, but did not fetch and verify the allowlisted relay's live signing key.",
+    "intended_behavior": "Use the configured endpoint for live I/O, including any configured transport trust anchor, and require its signed relay ID/key and federation mode/name to match the delivery source before route storage.",
+    "trace": [
+      {
+        "kind": "entrypoint",
+        "file": "NoctweaveRelayServer/Sources/NoctweaveRelayServer/RelayHandler.swift",
+        "line": 656,
+        "scope": "Linux deliverOpaqueRoute",
+        "description": "A remote sender submits a signed federated opaque-route delivery."
+      },
+      {
+        "kind": "propagation",
+        "file": "NoctweaveRelayServer/Sources/NoctweaveRelayServer/RelayHandler.swift",
+        "line": 1765,
+        "scope": "Linux manual member check",
+        "description": "The original check accepted an advertised endpoint tuple found in the allowlist."
+      },
+      {
+        "kind": "sink",
+        "file": "NoctweaveRelayServer/Sources/NoctweaveRelayServer/RelayHandler.swift",
+        "line": 689,
+        "scope": "Linux route storage",
+        "description": "After that check, the request reached the opaque route append operation."
+      }
+    ],
+    "evidence": [
+      {
+        "file": "NoctweaveRelayServer/Sources/NoctweaveRelayServer/RelayHandler.swift",
+        "line": 1765,
+        "description": "The original manual branch contains an allowlist tuple check but no live relay-info fetch or key comparison."
+      },
+      {
+        "file": "NoctweaveCore/Sources/NoctweaveCore/RelayServer.swift",
+        "line": 2148,
+        "description": "The original Core helper similarly accepts the claimed allowlisted endpoint."
+      }
+    ],
+    "conditions": [
+      {
+        "kind": "authentication_level",
+        "description": "A caller can create its own valid relay signing key and identity claim."
+      },
+      {
+        "kind": "system_configuration",
+        "description": "The receiver uses manual federation with at least one allowed endpoint."
+      },
+      {
+        "kind": "data_state",
+        "description": "Successful append still needs an existing route and its send capability; tests used dummy route material."
+      }
+    ],
+    "execution": {
+      "attacker_perspective": "An unaffiliated relay with a route send capability claims the operator's allowed endpoint under its own signing key.",
+      "payloads": [
+        "Self-signed dummy source identity advertising the allowed endpoint and a valid disposable route send capability."
+      ],
+      "instructions": [
+        "Send a signed deliverOpaqueRoute request to a local receiver while the actual allowed peer has a different key.",
+        "Observe whether the request is rejected at membership or reaches route storage; then test a real live allowed peer as a positive control."
+      ],
+      "observed_result": "Before repair, Linux returned a storage-layer notFound for a dummy route and isolated original Core failed its authentication-rejection assertion. After repair, forged identities are rejected and a live allowed peer can append to a disposable route."
+    },
+    "remediation": {
+      "strategy": "Bind manual membership to the live signed identity at the matched configured endpoint; preserve configured endpoint fields, try bounded alternate allowed endpoints, and fail closed where a transport cannot enforce a configured TLS fingerprint."
+    },
+    "severity": {
+      "likelihood": {
+        "score": "medium",
+        "reason": "The source can generate its own relay key and knows an allowlisted endpoint; a route capability is required for a successful append."
+      },
+      "impact": {
+        "score": "medium",
+        "reason": "Operator peer admission can be bypassed, but the route capability and end-to-end encryption remain separate controls."
+      },
+      "overall_severity": "medium"
+    },
+    "confidence": {
+      "score": "high",
+      "reason": "The original source omits live key binding; bounded original-source tests reached storage, and repaired negative and positive loopback tests passed."
+    }
+  },
+  {
+    "verdict": "confirmed",
+    "fingerprint": "noctweave/federation/stale-manual-policy",
+    "title": "Persistent Linux relay connection retains revoked manual peer policy",
+    "description": "A Linux RelayHandler kept its constructor-time manual allowlist even after the live operator configuration store removed a peer. A request on the existing connection passed membership and reached route storage.",
+    "root_cause": "The request handler snapshots current configuration for role checks, but the original federation membership helper read the handler's older stored configuration.",
+    "intended_behavior": "Evaluate the current operator policy for each delivery or forwarding request and recheck it after asynchronous peer verification before the side effect.",
+    "trace": [
+      {
+        "kind": "entrypoint",
+        "file": "NoctweaveRelayServer/Sources/NoctweaveRelayServer/RelayHandler.swift",
+        "line": 242,
+        "scope": "Linux request handler",
+        "description": "A request on a previously opened channel enters handle."
+      },
+      {
+        "kind": "propagation",
+        "file": "NoctweaveRelayServer/Sources/NoctweaveRelayServer/RelayHandler.swift",
+        "line": 1765,
+        "scope": "Original manual membership helper",
+        "description": "Membership reads the constructor configuration instead of the live request policy."
+      },
+      {
+        "kind": "sink",
+        "file": "NoctweaveRelayServer/Sources/NoctweaveRelayServer/RelayHandler.swift",
+        "line": 689,
+        "scope": "Opaque route append",
+        "description": "A revoked source reaches route storage rather than failing authorization."
+      }
+    ],
+    "evidence": [
+      {
+        "file": "NoctweaveRelayServer/Sources/NoctweaveRelayServer/RelayHandler.swift",
+        "line": 140,
+        "description": "The original handler retains a relayConfiguration field from construction."
+      },
+      {
+        "file": "NoctweaveRelayServer/Sources/NoctweaveRelayServer/RelayHandler.swift",
+        "line": 1765,
+        "description": "The original manual member helper uses the retained allowlist."
+      }
+    ],
+    "conditions": [
+      {
+        "kind": "system_configuration",
+        "description": "An operator removes a peer from the manual allowlist while a relay connection remains open."
+      },
+      {
+        "kind": "authentication_level",
+        "description": "The request carries a valid signed source identity; successful append also needs a route send capability."
+      },
+      {
+        "kind": "timing_dependency",
+        "description": "The bounded reproduction changes policy after connection establishment and before the next request."
+      }
+    ],
+    "execution": {
+      "attacker_perspective": "A recently revoked relay continues a connection created under the earlier allowlist.",
+      "payloads": [
+        "Signed dummy delivery from the revoked peer after RelayConfigurationStore changes to an empty allowlist."
+      ],
+      "instructions": [
+        "Open a local relay channel while the peer is allowed.",
+        "Replace the live configuration to revoke the peer, then send the delivery on that channel.",
+        "Compare membership rejection with the route-storage result."
+      ],
+      "observed_result": "Original Linux code reached storage and returned notFound for the disposable route instead of authenticationRequired. The repaired regression rejects the revoked peer; a live allowed peer still succeeds before revocation."
+    },
+    "remediation": {
+      "strategy": "Pass the current request configuration into membership and directory checks; reject if policy changes again before append or outbound send."
+    },
+    "severity": {
+      "likelihood": {
+        "score": "low",
+        "reason": "Requires an already open connection across an operator change."
+      },
+      "impact": {
+        "score": "medium",
+        "reason": "A revoked peer can bypass manual federation admission for a route operation if it also has the route capability."
+      },
+      "overall_severity": "low"
+    },
+    "confidence": {
+      "score": "high",
+      "reason": "The two-configuration loopback regression directly compared original and repaired behavior on one existing connection."
+    }
+  },
+  {
+    "verdict": "confirmed",
+    "fingerprint": "noctweave/namespace/first-claim",
+    "title": "Unaffiliated relays can acquire durable Noctweb namespace ownership",
+    "description": "Core and Linux relays accepted a self-signed initial claim with the correct federation mode/name and assigned an unused suffix without current member admission. Snapshot reads could also import discovered identities directly into the ledger.",
+    "root_cause": "Self-signature and trust-domain text were treated as sufficient authority for first durable assignment; snapshot generation had another ledger writer that bypassed the claim route.",
+    "intended_behavior": "Admit first claims under the configured solo, manual, or curated policy before writing the ledger; keep snapshot reads free of new peer ownership assignments. Open mode remains explicitly permissionless.",
+    "trace": [
+      {
+        "kind": "entrypoint",
+        "file": "NoctweaveRelayServer/Sources/NoctweaveRelayServer/RelayHandler.swift",
+        "line": 410,
+        "scope": "Linux claimNoctwebNamespace",
+        "description": "A remote signed claim supplies its own relay ID and desired suffix."
+      },
+      {
+        "kind": "sink",
+        "file": "NoctweaveRelayServer/Sources/NoctweaveRelayServer/RelayHandler.swift",
+        "line": 425,
+        "scope": "Linux durable namespace ledger",
+        "description": "The original handler calls store.claimNoctwebNamespace after only mode/name/suffix checks."
+      }
+    ],
+    "evidence": [
+      {
+        "file": "NoctweaveRelayServer/Sources/NoctweaveRelayServer/RelayHandler.swift",
+        "line": 410,
+        "description": "The original Linux claim branch has no mode-specific peer admission before the store call."
+      },
+      {
+        "file": "NoctweaveCore/Sources/NoctweaveCore/RelayServer.swift",
+        "line": 672,
+        "description": "The original Core claim branch likewise reaches its ledger after only trust-domain text checks."
+      },
+      {
+        "file": "NoctweaveRelayServer/Sources/NoctweaveRelayServer/RelayHandler.swift",
+        "line": 325,
+        "description": "The original Linux snapshot path builds a response while inserting directory identities into the ledger."
+      }
+    ],
+    "conditions": [
+      {
+        "kind": "system_configuration",
+        "description": "A non-open relay exposes the namespace claim route and an unused suffix is available."
+      },
+      {
+        "kind": "authentication_level",
+        "description": "The claimant controls its own valid signing key but is not an authorized federation member."
+      },
+      {
+        "kind": "data_state",
+        "description": "Existing legitimate ownership is not overwritten; the demonstrated impact is first ownership of an unclaimed suffix."
+      }
+    ],
+    "execution": {
+      "attacker_perspective": "An unaffiliated relay signs its own identity and claims an available suffix on a local receiver.",
+      "payloads": [
+        "Dummy self-signed .unlisted namespace claim in manual and solo configurations."
+      ],
+      "instructions": [
+        "Send the claim over a bounded local relay connection and inspect the response and durable namespace record.",
+        "On a separate fixture, request a snapshot whose directory contains a peer identity that has not passed claim admission."
+      ],
+      "observed_result": "The original Linux manual claim returned success and stored ownership. An isolated prepatch Core test failed both expected rejection and empty-ledger assertions. Repaired tests reject outsiders, accept a live allowed peer, and keep snapshot reads from assigning directory peers."
+    },
+    "remediation": {
+      "strategy": "Enforce local key/suffix in solo, live configured endpoint identity in manual, distinct signed coordinator quorum plus live identity in curated, and current-policy recheck immediately before assignment. Remove read-side peer imports; preserve existing owned records."
+    },
+    "severity": {
+      "likelihood": {
+        "score": "medium",
+        "reason": "Anyone able to reach the unauthenticated claim route could mint a valid self-signed key and target an unused suffix."
+      },
+      "impact": {
+        "score": "medium",
+        "reason": "Permanent or durable suffix squatting and bounded-ledger exhaustion undermine namespace integrity and availability; no plaintext compromise was demonstrated."
+      },
+      "overall_severity": "medium"
+    },
+    "confidence": {
+      "score": "high",
+      "reason": "Both original entrypoints and ledger sinks were traced; bounded prepatch Linux and isolated Core reproductions observed unauthorized ownership, and repaired regressions pass."
+    }
+  },
+  {
+    "verdict": "needs_validation",
+    "fingerprint": "noctweave/namespace/inflight-revocation",
+    "title": "Core namespace claim may commit after an in-flight policy revocation",
+    "description": "The Core relay rechecks operator configuration immediately before awaiting the namespace ledger actor. A concurrent allowlist removal or curated quorum increase could occur while that actor call is suspended, letting a claim admitted under the prior policy become durable. No controlled interleaving or persisted post-revocation claim was demonstrated.",
+    "claimed_root_cause": "Configuration changes use a lock separate from the namespace actor; the comparison and durable claim are not one serialized operation.",
+    "trace": [
+      {
+        "kind": "entrypoint",
+        "file": "NoctweaveCore/Sources/NoctweaveCore/RelayServer.swift",
+        "line": 674,
+        "scope": "Core namespace claim request",
+        "description": "A claim begins under a snapshot of the current relay configuration."
+      },
+      {
+        "kind": "propagation",
+        "file": "NoctweaveCore/Sources/NoctweaveCore/RelayServer.swift",
+        "line": 702,
+        "scope": "Final policy comparison",
+        "description": "The handler compares the current configuration with its earlier snapshot."
+      },
+      {
+        "kind": "sink",
+        "file": "NoctweaveCore/Sources/NoctweaveCore/RelayServer.swift",
+        "line": 710,
+        "scope": "Awaited ledger mutation",
+        "description": "The claim is committed by a separate actor call after the comparison."
+      }
+    ],
+    "evidence": [
+      {
+        "file": "NoctweaveCore/Sources/NoctweaveCore/RelayServer.swift",
+        "line": 702,
+        "description": "The current guard is followed by an awaited actor mutation with no shared policy generation or transaction."
+      }
+    ],
+    "blockers": [
+      "A controlled actor-queue interleaving was not executed, so the exact post-revocation durable result is not directly observed.",
+      "The change needed to serialize policy updates with ledger writes is broader than the focused admission repair."
+    ],
+    "validation_plan": {
+      "local": "Use a test seam to pause the claim after its final policy comparison, revoke the peer or raise the quorum, resume the actor call, and assert that no new namespace record is retained.",
+      "deployment": "After an atomic policy-and-ledger design is implemented, exercise the same interleaving with disposable local relays and verify revocation semantics before deployment."
+    }
+  },
+  {
+    "verdict": "confirmed",
+    "fingerprint": "noctweave/operator/endpoint-anchor-roundtrip",
+    "title": "Unrelated operator settings save removes endpoint trust anchors",
+    "description": "The Linux operator form renders relay endpoints as URL strings containing only scheme, host, and port. Revalidating an unrelated operator note edit reconstructed endpoints without their configured TLS certificate fingerprint or coordinator directory signing key. The original focused test failed four trust-preservation assertions.",
+    "root_cause": "The editable configuration serializes trust-bearing RelayEndpoint values through a lossy URL-only representation and rebuilds them without merging existing security fields.",
+    "intended_behavior": "When an endpoint URL is unchanged, preserve its configured certificate fingerprint and directory signing key across operator edits, persistence, and restart; reject conflicting existing trust attributes.",
+    "trace": [
+      {
+        "kind": "entrypoint",
+        "file": "NoctweaveRelayServer/Sources/NoctweaveRelayServer/OperatorConfiguration.swift",
+        "line": 90,
+        "scope": "Editable operator settings",
+        "description": "The current effective configuration is converted to form values before an edit."
+      },
+      {
+        "kind": "propagation",
+        "file": "NoctweaveRelayServer/Sources/NoctweaveRelayServer/OperatorConfiguration.swift",
+        "line": 789,
+        "scope": "URL-only endpoint rendering",
+        "description": "The serializer excludes certificate fingerprints and coordinator directory signing keys."
+      },
+      {
+        "kind": "sink",
+        "file": "NoctweaveRelayServer/Sources/NoctweaveRelayServer/OperatorConfiguration.swift",
+        "line": 250,
+        "scope": "Effective configuration reconstruction",
+        "description": "The original validator parses the URL strings into new endpoints without the omitted trust fields."
+      }
+    ],
+    "evidence": [
+      {
+        "file": "NoctweaveRelayServer/Tests/NoctweaveRelayServerTests/OperatorWebUITests.swift",
+        "line": 137,
+        "description": "A focused original-code regression changing only operatorNote failed four assertions for advertised, manual, coordinator, and hidden-retrieval endpoint trust fields; it passes with the repair."
+      },
+      {
+        "file": "NoctweaveRelayServer/Sources/NoctweaveRelayServer/OperatorConfiguration.swift",
+        "line": 103,
+        "description": "The baseline form seeds manual and coordinator endpoints with the same lossy serializer."
+      }
+    ],
+    "conditions": [
+      {
+        "kind": "system_configuration",
+        "description": "A relay has configured TLS fingerprints or coordinator directory signing keys on one or more endpoints."
+      },
+      {
+        "kind": "user_interaction",
+        "description": "An authorized operator saves another setting through the URL-only form."
+      }
+    ],
+    "execution": {
+      "attacker_perspective": "An adversary benefits if an operator routinely edits a note or runtime option and the relay silently drops a previously configured trust anchor.",
+      "payloads": [
+        "A pinned dummy base configuration and an editable form with only operatorNote changed."
+      ],
+      "instructions": [
+        "Construct an editable configuration from the pinned base.",
+        "Change only operatorNote, validate it back into effective RelayConfiguration, and compare all endpoint trust fields."
+      ],
+      "observed_result": "Against original source, four assertions failed because trust fields disappeared. Against the repair, the same fields are preserved, including a mixed-case hostname round trip."
+    },
+    "remediation": {
+      "strategy": "Merge security attributes from the current endpoint object when scheme, host, port, and transport still match; reject conflicting duplicate anchors and cover every form field that reuses the URL serializer."
+    },
+    "severity": {
+      "likelihood": {
+        "score": "medium",
+        "reason": "A routine authorized form save can trigger the loss when anchored endpoints are configured."
+      },
+      "impact": {
+        "score": "medium",
+        "reason": "The relay can silently stop enforcing a configured certificate or directory signing key; no resulting route compromise was demonstrated."
+      },
+      "overall_severity": "medium"
+    },
+    "confidence": {
+      "score": "high",
+      "reason": "The serializer and parser omit the fields, and the original-code focused test failed trust-preservation assertions that pass after repair."
+    }
+  },
+  {
+    "verdict": "confirmed",
+    "fingerprint": "noctweave/relay/coordinator-pin",
+    "title": "Invalid or racing first-contact coordinator responses can poison a directory key pin",
+    "description": "The Linux relay persisted an advertised coordinator directory key from .info before validating the coordinator's federation and signed directory. Its pin store also overwrote an existing key, allowing concurrent first-contact paths to replace one another.",
+    "root_cause": "Pin mutation preceded full coordinator verification, and the store lacked atomic compare-or-set semantics for an already pinned endpoint.",
+    "intended_behavior": "Validate configured coordinator role, federation, expected signing key, and signed directory before a new pin; once pinned, reject a different key atomically.",
+    "trace": [
+      {
+        "kind": "entrypoint",
+        "file": "NoctweaveRelayServer/Sources/NoctweaveRelayServer/RelayHandler.swift",
+        "line": 2152,
+        "scope": "Linux coordinator fetch",
+        "description": "The original helper receives a first .info response containing an advertised directory key."
+      },
+      {
+        "kind": "propagation",
+        "file": "NoctweaveRelayServer/Sources/NoctweaveRelayServer/RelayHandler.swift",
+        "line": 2169,
+        "scope": "Linux early key pin",
+        "description": "The original helper stores the key before validating the following directory snapshot."
+      },
+      {
+        "kind": "sink",
+        "file": "NoctweaveRelayServer/Sources/NoctweaveRelayServer/RelayStore.swift",
+        "line": 921,
+        "scope": "Coordinator pin store",
+        "description": "The original setter overwrites a previous pin for the same endpoint."
+      }
+    ],
+    "evidence": [
+      {
+        "file": "NoctweaveRelayServer/Sources/NoctweaveRelayServer/RelayHandler.swift",
+        "line": 2169,
+        "description": "Original code calls pinCoordinatorPublicKey before validating the signed directory."
+      },
+      {
+        "file": "NoctweaveRelayServer/Sources/NoctweaveRelayServer/RelayStore.swift",
+        "line": 921,
+        "description": "Original store setter has no existing-key compare-and-set guard."
+      }
+    ],
+    "conditions": [
+      {
+        "kind": "network_routing",
+        "description": "An attacker or faulty endpoint supplies an invalid first-contact coordinator response, or concurrent first contacts present different keys."
+      },
+      {
+        "kind": "system_configuration",
+        "description": "The coordinator has no previously trusted key at the start of the first-contact path."
+      },
+      {
+        "kind": "data_state",
+        "description": "A wrong pin can make later legitimate signed directories fail validation; existing pins are not automatically reset."
+      }
+    ],
+    "execution": {
+      "attacker_perspective": "A first-contact impostor supplies a directory key without a valid matching coordinator directory.",
+      "payloads": [
+        "Wrong-federation .info carrying a disposable 1,952-byte signing key; concurrent different-key pin attempts in a store fixture."
+      ],
+      "instructions": [
+        "Fetch a configured coordinator whose first .info is invalid and inspect the persisted pin before any valid signed snapshot.",
+        "Race or repeat two different key assignments for the same endpoint and inspect whether the first pin can be replaced."
+      ],
+      "observed_result": "A focused original-source red test found the invalid first .info had already persisted its key. The repaired handler leaves the pin empty until validation; the store's compare-or-set regression rejects replacement by a different key."
+    },
+    "remediation": {
+      "strategy": "Honor a configured directory signing key when present, validate .info and signed snapshot before a new TOFU pin, and atomically reject replacement of an existing key."
+    },
+    "severity": {
+      "likelihood": {
+        "score": "low",
+        "reason": "Requires first-contact position or concurrent conflicting responses."
+      },
+      "impact": {
+        "score": "low",
+        "reason": "A poisoned pin can deny valid coordinator directory use; arbitrary namespace ownership or plaintext access was not shown from this issue alone."
+      },
+      "overall_severity": "low"
+    },
+    "confidence": {
+      "score": "high",
+      "reason": "Original handler and store mutation order are explicit; bounded red/green pin tests exercise invalid first contact and replacement."
+    }
+  }
+]

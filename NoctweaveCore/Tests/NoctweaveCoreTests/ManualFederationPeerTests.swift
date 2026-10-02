@@ -2,6 +2,257 @@ import XCTest
 @testable import NoctweaveCore
 
 final class ManualFederationPeerTests: XCTestCase {
+    func testFederationOutboundEndpointRetainsOperatorTLSPin() {
+        let pin = Data(repeating: 0x42, count: 32)
+        let requested = RelayEndpoint(
+            host: "relay.example",
+            port: 443,
+            useTLS: true
+        )
+        let configured = RelayEndpoint(
+            host: "relay.example",
+            port: 443,
+            useTLS: true,
+            tlsCertificateFingerprintSHA256: pin
+        )
+        let selected = RelayServer.endpointConstrainedByTrustedPin(
+            requested: requested,
+            trusted: configured
+        )
+        XCTAssertEqual(selected?.tlsCertificateFingerprintSHA256, pin)
+
+        var conflicting = requested
+        conflicting.tlsCertificateFingerprintSHA256 = Data(
+            repeating: 0x43,
+            count: 32
+        )
+        XCTAssertNil(RelayServer.endpointConstrainedByTrustedPin(
+            requested: conflicting,
+            trusted: configured
+        ))
+    }
+
+    func testSoloNamespaceRejectsRemoteClaim() async throws {
+        let relay = RelayServer(
+            store: RelayStore(storeURL: nil),
+            configuration: RelayConfiguration(kind: .standard)
+        )
+        let endpoint = try await startOnLoopback(
+            relay,
+            description: "solo relay started"
+        )
+        defer { relay.stop() }
+        let suffix = NoctwebRelaySuffixV1(rawValue: ".outsider")!
+        let attacker = try namespaceClaim(
+            key: RelayIdentityKeyMaterialV1.generate(),
+            federation: FederationDescriptor(mode: .solo),
+            suffix: suffix,
+            endpoint: endpoint
+        )
+
+        let response = try await RelayClient(endpoint: endpoint).send(
+            .claimNoctwebNamespaceV1(
+                NoctwebNamespaceClaimRequestV1(identity: attacker)
+            )
+        )
+        XCTAssertEqual(response.error?.code, .authenticationRequired)
+        let records = await relay.noctwebNamespaceRecords()
+        XCTAssertTrue(records.isEmpty)
+    }
+
+    func testManualNamespaceRejectsUnlistedAndForgedClaimsWithoutReadSideImport()
+        async throws
+    {
+        let federation = FederationDescriptor(
+            mode: .manual,
+            name: "manual-namespace-admission",
+            description: "source operator note"
+        )
+        let receiverFederation = FederationDescriptor(
+            mode: .manual,
+            name: federation.name,
+            description: "receiver operator note"
+        )
+        let peerSuffix = NoctwebRelaySuffixV1(rawValue: ".allowedpeer")!
+        let peerKey = try RelayIdentityKeyMaterialV1.generate()
+        let peer = RelayServer(
+            store: RelayStore(storeURL: nil),
+            configuration: RelayConfiguration(
+                kind: .standard,
+                federation: federation,
+                noctwebRelaySuffix: peerSuffix
+            ),
+            relayIdentity: peerKey
+        )
+        let peerEndpoint = try await startOnLoopback(
+            peer,
+            description: "allowed peer started"
+        )
+        defer { peer.stop() }
+        let decoy = RelayServer(
+            store: RelayStore(storeURL: nil),
+            configuration: RelayConfiguration(
+                kind: .standard,
+                federation: federation
+            )
+        )
+        let decoyEndpoint = try await startOnLoopback(
+            decoy,
+            description: "decoy relay started"
+        )
+        defer { decoy.stop() }
+        let receiver = RelayServer(
+            store: RelayStore(storeURL: nil),
+            configuration: RelayConfiguration(
+                kind: .standard,
+                federation: receiverFederation,
+                federationAllowList: [decoyEndpoint, peerEndpoint],
+                allowPrivateFederationEndpoints: true
+            )
+        )
+        let receiverEndpoint = try await startOnLoopback(
+            receiver,
+            description: "receiver started"
+        )
+        defer { receiver.stop() }
+
+        let snapshotResponse = try await RelayClient(
+            endpoint: receiverEndpoint
+        ).send(
+            .getNoctwebNamespaceSnapshotV1(
+                NoctwebNamespaceSnapshotRequestV1(
+                    federationMode: .manual,
+                    federationName: federation.name
+                )
+            )
+        )
+        XCTAssertNotNil(snapshotResponse.successBody)
+        let afterSnapshot = await receiver.noctwebNamespaceRecords()
+        XCTAssertTrue(afterSnapshot.isEmpty)
+
+        let unlistedSuffix = NoctwebRelaySuffixV1(rawValue: ".unlisted")!
+        let unlisted = try namespaceClaim(
+            key: RelayIdentityKeyMaterialV1.generate(),
+            federation: federation,
+            suffix: unlistedSuffix,
+            endpoint: receiverEndpoint
+        )
+        let unlistedResponse = try await RelayClient(
+            endpoint: receiverEndpoint
+        ).send(
+            .claimNoctwebNamespaceV1(
+                NoctwebNamespaceClaimRequestV1(identity: unlisted)
+            )
+        )
+        XCTAssertEqual(unlistedResponse.error?.code, .authenticationRequired)
+        let afterUnlisted = await receiver.noctwebNamespaceRecords()
+        XCTAssertTrue(afterUnlisted.isEmpty)
+
+        let forgedSuffix = NoctwebRelaySuffixV1(rawValue: ".forgedpeer")!
+        let forged = try namespaceClaim(
+            key: RelayIdentityKeyMaterialV1.generate(),
+            federation: federation,
+            suffix: forgedSuffix,
+            endpoint: peerEndpoint
+        )
+        let forgedResponse = try await RelayClient(
+            endpoint: receiverEndpoint
+        ).send(
+            .claimNoctwebNamespaceV1(
+                NoctwebNamespaceClaimRequestV1(identity: forged)
+            )
+        )
+        XCTAssertEqual(forgedResponse.error?.code, .authenticationRequired)
+        let afterForged = await receiver.noctwebNamespaceRecords()
+        XCTAssertTrue(afterForged.isEmpty)
+
+        let infoResponse = try await RelayClient(endpoint: peerEndpoint).send(
+            .info()
+        )
+        guard case .relayInfo(let info)? = infoResponse.successBody,
+              let peerIdentity = info.relayIdentity else {
+            return XCTFail("Expected the allowed peer's signed identity.")
+        }
+        let fallbackIdentity = try peerKey.makeSignedClaim(
+            sequence: peerIdentity.claim.sequence + 1,
+            relayKind: .standard,
+            federation: federation,
+            advertisedEndpoints: [decoyEndpoint, peerEndpoint],
+            noctwebSuffix: peerSuffix,
+            capabilities: try XCTUnwrap(info.protocolCapabilities)
+        )
+        let admittedResponse = try await RelayClient(
+            endpoint: receiverEndpoint
+        ).send(
+            .claimNoctwebNamespaceV1(
+                NoctwebNamespaceClaimRequestV1(identity: fallbackIdentity)
+            )
+        )
+        XCTAssertNotNil(admittedResponse.successBody)
+        let records = await receiver.noctwebNamespaceRecords()
+        XCTAssertEqual(records.first?.suffix, peerSuffix)
+        XCTAssertEqual(records.first?.ownerRelayID, peerIdentity.claim.relayID)
+    }
+
+    func testManualNamespaceAcceptsAllowlistedLiveHostRelay() async throws {
+        let federation = FederationDescriptor(
+            mode: .manual,
+            name: "manual-host-namespace"
+        )
+        let suffix = NoctwebRelaySuffixV1(rawValue: ".hosted")!
+        let hostStore = try RelayNoctwebHostStore(
+            directoryURL: nil,
+            signingPrivateKeyData:
+                RelayNoctwebHostStore.generateSigningPrivateKey()
+        )
+        try hostStore.load()
+        let host = RelayServer(
+            store: RelayStore(storeURL: nil),
+            configuration: RelayConfiguration(
+                kind: .host,
+                federation: federation,
+                noctwebRelaySuffix: suffix
+            ),
+            relayIdentity: try RelayIdentityKeyMaterialV1.generate(),
+            noctwebHostStore: hostStore
+        )
+        let hostEndpoint = try await startOnLoopback(
+            host,
+            description: "host relay started"
+        )
+        defer { host.stop() }
+        let receiver = RelayServer(
+            store: RelayStore(storeURL: nil),
+            configuration: RelayConfiguration(
+                kind: .standard,
+                federation: federation,
+                federationAllowList: [hostEndpoint]
+            )
+        )
+        let receiverEndpoint = try await startOnLoopback(
+            receiver,
+            description: "receiver started"
+        )
+        defer { receiver.stop() }
+
+        let infoResponse = try await RelayClient(endpoint: hostEndpoint).send(
+            .info()
+        )
+        guard case .relayInfo(let info)? = infoResponse.successBody,
+              let identity = info.relayIdentity else {
+            return XCTFail("Expected the host relay's signed identity.")
+        }
+        let response = try await RelayClient(endpoint: receiverEndpoint).send(
+            .claimNoctwebNamespaceV1(
+                NoctwebNamespaceClaimRequestV1(identity: identity)
+            )
+        )
+        XCTAssertNotNil(response.successBody)
+        let records = await receiver.noctwebNamespaceRecords()
+        XCTAssertEqual(records.first?.suffix, suffix)
+        XCTAssertEqual(records.first?.ownerRelayID, identity.claim.relayID)
+    }
+
     func testRuntimeRefreshReannouncesNamespaceToLateManualPeer()
         async throws
     {
@@ -276,6 +527,49 @@ final class ManualFederationPeerTests: XCTestCase {
         XCTAssertEqual(
             response.error?.message,
             "Manual federation does not accept relay registration; configure peers explicitly."
+        )
+    }
+
+    private func namespaceClaim(
+        key: RelayIdentityKeyMaterialV1,
+        federation: FederationDescriptor,
+        suffix: NoctwebRelaySuffixV1,
+        endpoint: RelayEndpoint
+    ) throws -> SignedRelayIdentityClaimV1 {
+        let configuration = RelayConfiguration(
+            kind: .standard,
+            federation: federation
+        )
+        let capabilities = try XCTUnwrap(
+            configuration.makeInfo().protocolCapabilities
+        )
+        return try key.makeSignedClaim(
+            sequence: Int(Date().timeIntervalSince1970),
+            relayKind: .standard,
+            federation: federation,
+            advertisedEndpoints: [endpoint],
+            noctwebSuffix: suffix,
+            capabilities: capabilities
+        )
+    }
+
+    private func startOnLoopback(
+        _ relay: RelayServer,
+        description: String
+    ) async throws -> RelayEndpoint {
+        let started = expectation(description: description)
+        var port: UInt16?
+        relay.onEvent = { event in
+            if case .started(let boundPort) = event {
+                port = boundPort
+                started.fulfill()
+            }
+        }
+        try relay.start(host: "127.0.0.1", port: 0)
+        await fulfillment(of: [started], timeout: 5)
+        return RelayEndpoint(
+            host: "127.0.0.1",
+            port: try XCTUnwrap(port)
         )
     }
 }

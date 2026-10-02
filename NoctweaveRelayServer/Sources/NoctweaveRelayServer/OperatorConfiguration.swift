@@ -247,16 +247,22 @@ struct OperatorEditableConfiguration: Codable, Equatable {
             )
         }
 
-        let endpoint = try optionalEndpoint(advertisedEndpoint, field: "advertisedEndpoint")
+        let endpoint = try optionalEndpoint(
+            advertisedEndpoint,
+            field: "advertisedEndpoint",
+            current: current.advertisedEndpoint
+        )
         let allowList = try endpointList(
             federationAllowList,
             field: "federationAllowList",
-            maximum: Self.maximumEndpointCount
+            maximum: Self.maximumEndpointCount,
+            current: current.federationAllowList
         )
         let coordinators = try endpointList(
             federationCoordinatorEndpoints,
             field: "federationCoordinatorEndpoints",
-            maximum: 16
+            maximum: 16,
+            current: current.federationCoordinatorEndpoints ?? []
         )
         if mode == .curated, coordinators.isEmpty {
             throw OperatorConfigurationError.unsupportedTransition(
@@ -528,9 +534,14 @@ struct OperatorEditableConfiguration: Codable, Equatable {
         let replicas = try (hiddenRetrievalReplicas ?? []).map { value -> HiddenRetrievalPIRReplica in
             let fields = value.split(separator: ",", maxSplits: 2).map { String($0).trimmingCharacters(in: .whitespacesAndNewlines) }
             guard fields.count == 3, !fields[0].isEmpty, !fields[1].isEmpty,
-                  let endpoint = parseOperatorRelayEndpoint(fields[2]) else {
+                  let parsedEndpoint = parseOperatorRelayEndpoint(fields[2]) else {
                 throw OperatorConfigurationError.invalidField("hiddenRetrievalReplicas")
             }
+            let endpoint = try preservingEndpointTrustAttributes(
+                parsedEndpoint,
+                from: current.hiddenRetrieval?.replicatedXorPIRReplicas?.map(\.endpoint) ?? [],
+                field: "hiddenRetrievalReplicas"
+            )
             return HiddenRetrievalPIRReplica(replicaId: fields[0], operatorId: fields[1], endpoint: endpoint)
         }
         let support = HiddenRetrievalSupport(
@@ -671,28 +682,72 @@ struct OperatorEditableConfiguration: Codable, Equatable {
         return normalized
     }
 
-    private func optionalEndpoint(_ value: String, field: String) throws -> RelayEndpoint? {
+    private func optionalEndpoint(
+        _ value: String,
+        field: String,
+        current: RelayEndpoint?
+    ) throws -> RelayEndpoint? {
         let normalized = value.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !normalized.isEmpty else { return nil }
         guard let endpoint = parseOperatorRelayEndpoint(normalized) else {
             throw OperatorConfigurationError.invalidField(field)
         }
-        return endpoint
+        return try preservingEndpointTrustAttributes(
+            endpoint,
+            from: current.map { [$0] } ?? [],
+            field: field
+        )
     }
 
-    private func endpointList(_ values: [String], field: String, maximum: Int) throws -> [RelayEndpoint] {
+    private func endpointList(
+        _ values: [String],
+        field: String,
+        maximum: Int,
+        current: [RelayEndpoint]
+    ) throws -> [RelayEndpoint] {
         guard values.count <= maximum else {
             throw OperatorConfigurationError.invalidField(field)
         }
-        var seen = Set<RelayEndpoint>()
+        var seen = Set<String>()
         var endpoints: [RelayEndpoint] = []
         for value in values {
-            guard let endpoint = parseOperatorRelayEndpoint(value), seen.insert(endpoint).inserted else {
+            guard let parsed = parseOperatorRelayEndpoint(value),
+                  seen.insert(operatorRelayEndpointString(parsed).lowercased()).inserted else {
                 throw OperatorConfigurationError.invalidField(field)
             }
+            let endpoint = try preservingEndpointTrustAttributes(
+                parsed,
+                from: current,
+                field: field
+            )
             endpoints.append(endpoint)
         }
         return endpoints
+    }
+
+    private func preservingEndpointTrustAttributes(
+        _ parsed: RelayEndpoint,
+        from current: [RelayEndpoint],
+        field: String
+    ) throws -> RelayEndpoint {
+        let matches = current.filter {
+            $0.host.lowercased() == parsed.host.lowercased()
+                && $0.port == parsed.port
+                && $0.useTLS == parsed.useTLS
+                && $0.transport == parsed.transport
+        }
+        guard let first = matches.first else { return parsed }
+        guard matches.allSatisfy({ $0 == first }) else {
+            throw OperatorConfigurationError.invalidField(field)
+        }
+        return RelayEndpoint(
+            host: parsed.host,
+            port: parsed.port,
+            useTLS: parsed.useTLS,
+            transport: parsed.transport,
+            tlsCertificateFingerprintSHA256: first.tlsCertificateFingerprintSHA256,
+            directorySigningPublicKey: first.directorySigningPublicKey
+        )
     }
 }
 

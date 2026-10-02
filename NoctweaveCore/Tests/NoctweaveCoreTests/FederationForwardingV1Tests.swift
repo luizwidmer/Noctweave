@@ -204,6 +204,33 @@ final class FederationForwardingV1Tests: XCTestCase {
             packet: packet,
             sendCapability: material.sendCapability
         )
+        // A self-signed outsider cannot become a manual federation peer just
+        // by naming the operator's allowlisted source endpoint.
+        let outsiderKey = try RelayIdentityKeyMaterialV1.generate()
+        let outsiderIdentity = try outsiderKey.makeSignedClaim(
+            sequence: Int(Date().timeIntervalSince1970),
+            relayKind: .standard,
+            federation: federation,
+            advertisedEndpoints: [sourceEndpoint],
+            noctwebSuffix: NoctwebRelaySuffixV1(rawValue: ".outsider"),
+            capabilities: try XCTUnwrap(
+                RelayConfiguration(
+                    kind: .standard,
+                    federation: federation
+                ).makeInfo().protocolCapabilities
+            )
+        )
+        let outsiderDelivery = try FederatedOpaqueRouteDeliveryV1.signed(
+            sourceIdentity: outsiderIdentity,
+            sourceKey: outsiderKey,
+            destinationRelayID: destinationKey.relayID,
+            append: append
+        )
+        let rejected = try await destinationClient.send(
+            .deliverOpaqueRouteV1(outsiderDelivery)
+        )
+        XCTAssertEqual(rejected.error?.code, .authenticationRequired)
+
         let forwarded = try await RelayClient(endpoint: sourceEndpoint).send(
             .forwardOpaqueRouteV1(
                 FederatedOpaqueRouteForwardRequestV1(

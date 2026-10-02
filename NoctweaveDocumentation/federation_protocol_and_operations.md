@@ -68,10 +68,30 @@ Namespace mutations use `nw.federation@1` methods `claim`, `rotate`, and
 federation peer set. Repeated claims are effect-idempotent; stale, conflicting,
 or replayed transitions are rejected.
 
+On a first claim, a solo relay admits only its own configured identity and
+suffix. A manual relay requires an operator-listed endpoint whose live signed
+identity matches the claimant's relay ID, key, and suffix. A curated relay
+requires the configured quorum of distinct signed coordinator keys to list that
+identity, followed by the same live identity check. A temporarily offline peer
+must retry its first claim when reachable; an existing owner's durable record
+remains intact while it is offline. Open mode permits any valid self-signed
+first claim. Its explicit client signer policy controls snapshot acceptance,
+but does not prevent local suffix squatting or exhaustion of the bounded
+4,096-record ledger.
+
+These admission checks affect new claims. They cannot identify or safely
+reassign suffixes that were persisted before the checks. Operators upgrading
+an existing federation should review its namespace ledger and trusted client
+snapshots for unexpected owners before relying on them. Do not automatically
+clear or reassign historical ownership or tombstones.
+
 ## Consensus snapshots
 
 Relays expose a canonical, signed namespace snapshot through
-`nw.federation@1 namespace`. A client accepts a snapshot only when:
+`nw.federation@1 namespace`. A snapshot read signs the relay's already
+accepted ledger state and may refresh its own configured claim. It does not
+assign suffixes from discovery records.
+A client accepts a snapshot only when:
 
 1. its federation mode and name match the selected network profile;
 2. each signature verifies against an explicitly trusted relay signer;
@@ -106,6 +126,17 @@ identifier. Clients may still submit directly to B when policy and
 connectivity permit. Home-relay forwarding is a delivery convenience, not a
 new message trust authority.
 
+In manual mode, incoming delivery and outgoing forwarding bind an
+operator-listed endpoint to its live signed relay ID and key. A claim with
+multiple listed endpoints can use a later live endpoint when an earlier one is
+offline. Removing a peer
+from the runtime allow list rejects later requests even on an existing
+connection. In curated mode, federation delivery and forwarding require the
+configured quorum of distinct signed coordinator keys to endorse the
+same relay identity and endpoint. A destination route send capability is still
+required to append a packet. Open-mode discovery does not grant a route
+capability or alter the client's explicit namespace signer policy.
+
 ## Federated Noctweb retrieval
 
 A host relay binds a site label and suffix to an immutable hosted object,
@@ -137,13 +168,35 @@ All federated standard and host relays must configure:
 - one canonical suffix, even when the relay routes to a separate content host.
 
 For manual mode, list every expected peer. For curated mode, configure the
-coordinator endpoints, directory signing keys, registration token, and quorum.
+coordinator endpoints, registration token, and quorum. The Linux relay checks
+a configured coordinator `directorySigningPublicKey` against the advertised
+key and signed directory. If that key is omitted, Linux pins it only after
+validating the first signed directory. Authenticate the first connection and
+verify a first-contact pin out of band; TOFU cannot exclude a first-contact
+network attacker. NoctweaveCore requires a configured coordinator directory
+signing key for curated authorization and does not use this Linux TOFU store.
+Two endpoints using one signing key count as one quorum signer. The
+`curatedRequireSignedDirectory` display/cache setting does not allow unsigned
+directories to authorize namespace claims or federation delivery and
+forwarding.
+
+The Linux relay outbound HTTP(S) transport currently does not verify an
+explicit `tlsCertificateFingerprintSHA256`. Requests to endpoints with this
+field fail closed before network dispatch. Unpinned HTTPS relies on platform
+certificate validation; raw TLS/TCP outbound forwarding is unavailable.
+Curated outbound retrieval and forwarding use the endpoint endorsed by the
+signed coordinator quorum for both live identity checks and dispatch. A client
+cannot omit an endorsed fingerprint to cause an unpinned connection. The
+operator console preserves configured endpoint keys and fingerprints across
+unrelated saves when the endpoint URL is unchanged; configure new anchors in
+startup configuration rather than relying on the URL-only form fields.
 For open mode, enable DHT/PEX only for discovery and distribute the independent
 namespace signer policy to clients.
 
 Operators can add and remove runtime peers without restarting listeners.
-Removing a peer changes reachability and future quorum policy; it does not
-erase that relay's durable suffix ownership or historical tombstones.
+Removing a peer takes effect for federation delivery on existing connections
+and changes future quorum policy; it does not erase that relay's durable suffix
+ownership or historical tombstones.
 
 ## Security boundaries
 

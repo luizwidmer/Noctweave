@@ -39,6 +39,8 @@ public final class RelayServer {
     private var relayIdentityClaimSequence = 0
     private var cachedRelayIdentity: SignedRelayIdentityClaimV1?
     private let requestRateLimiter = RelayRequestRateLimiter()
+    private let namespaceAdmissionLock = NSLock()
+    private var namespaceAdmissionsInFlight = 0
     private let configurationLock = NSLock()
     private var relayConfiguration: RelayConfiguration
     public var configuration: RelayConfiguration {
@@ -670,10 +672,11 @@ public final class RelayServer {
                 )
             }
         case .claimNoctwebNamespace(let claim):
+            let claimConfiguration = configuration
             guard claim.identity.claim.federationMode
-                    == configuration.federation.mode,
+                    == claimConfiguration.federation.mode,
                   claim.identity.claim.federationName
-                    == configuration.federation.name,
+                    == claimConfiguration.federation.name,
                   claim.identity.claim.noctwebSuffix != nil else {
                 return .error(
                     "Noctweb namespace claim trust domain mismatch.",
@@ -682,10 +685,28 @@ public final class RelayServer {
                 )
             }
             do {
+                guard try await isAdmittedNoctwebNamespaceClaim(
+                    claim.identity,
+                    configuration: claimConfiguration
+                ) else {
+                    return .error(
+                        "Noctweb namespace claimant is not an authenticated federation member.",
+                        code: .authenticationRequired,
+                        respondingTo: request
+                    )
+                }
                 let suffix = claim.identity.claim.noctwebSuffix!
                 let previous = await noctwebNamespaceRuntime.record(
                     for: suffix
                 )
+                guard configuration == claimConfiguration else {
+                    return .error(
+                        "Noctweb namespace policy changed during admission.",
+                        code: .unavailable,
+                        retryable: true,
+                        respondingTo: request
+                    )
+                }
                 let record = try await noctwebNamespaceRuntime.claim(
                     claim.identity
                 )
@@ -697,10 +718,24 @@ public final class RelayServer {
                     .noctwebNamespaceRecord(record),
                     respondingTo: request
                 )
-            } catch {
+            } catch NamespaceAdmissionError.busy {
+                return .error(
+                    "Noctweb namespace membership verification is busy.",
+                    code: .rateLimited,
+                    retryable: true,
+                    respondingTo: request
+                )
+            } catch is NoctwebNamespaceLedgerErrorV1 {
                 return .error(
                     "Noctweb namespace claim is invalid or conflicts with ownership.",
                     code: .conflict,
+                    respondingTo: request
+                )
+            } catch {
+                return .error(
+                    "Noctweb namespace claim could not be verified.",
+                    code: .unavailable,
+                    retryable: true,
                     respondingTo: request
                 )
             }
@@ -814,8 +849,9 @@ public final class RelayServer {
                 return opaqueRouteErrorResponse(error, respondingTo: request)
             }
         case .forwardOpaqueRoute(let payload):
-            guard configuration.kind == .standard,
-                  configuration.federation.mode != .solo else {
+            let forwardingConfiguration = configuration
+            guard forwardingConfiguration.kind == .standard,
+                  forwardingConfiguration.federation.mode != .solo else {
                 return .error(
                     "Federation forwarding is unavailable on this relay.",
                     code: .unavailable,
@@ -832,10 +868,18 @@ public final class RelayServer {
                 return .error("Invalid federation forwarding request.", respondingTo: request)
             }
             do {
-                _ = try await authenticatedFederationPeer(
+                let destinationPeer = try await authenticatedFederationPeer(
                     destination: payload.destination,
                     expectedRelayID: payload.destinationRelayID
                 )
+                guard configuration == forwardingConfiguration else {
+                    return .error(
+                        "Federation policy changed during forwarding.",
+                        code: .unavailable,
+                        retryable: true,
+                        respondingTo: request
+                    )
+                }
                 let sourceIdentity = try makeCurrentSignedRelayIdentity()
                 let delivery = try FederatedOpaqueRouteDeliveryV1.signed(
                     sourceIdentity: sourceIdentity,
@@ -844,7 +888,7 @@ public final class RelayServer {
                     append: payload.append
                 )
                 let destinationResponse = try await RelayClient(
-                    endpoint: payload.destination
+                    endpoint: destinationPeer.endpoint
                 ).send(.deliverOpaqueRouteV1(delivery))
                 if case .opaqueRouteAppend(let receipt)? = destinationResponse.successBody {
                     return .success(.opaqueRouteAppend(receipt), respondingTo: request)
@@ -862,8 +906,9 @@ public final class RelayServer {
                 )
             }
         case .deliverOpaqueRoute(let delivery):
-            guard configuration.kind == .standard,
-                  configuration.federation.mode != .solo else {
+            let deliveryConfiguration = configuration
+            guard deliveryConfiguration.kind == .standard,
+                  deliveryConfiguration.federation.mode != .solo else {
                 return .error(
                     "Federation delivery is unavailable on this relay.",
                     code: .unavailable,
@@ -874,7 +919,7 @@ public final class RelayServer {
                 let localRelayID = try requiredRelayIdentityKeyMaterial().relayID
                 guard try delivery.verifyThrowing(
                     expectedDestinationRelayID: localRelayID,
-                    federation: configuration.federation
+                    federation: deliveryConfiguration.federation
                 ),
                 try await isAuthenticatedFederationMember(
                     delivery.sourceIdentity
@@ -882,6 +927,14 @@ public final class RelayServer {
                     return .error(
                         "Federation delivery identity or membership is invalid.",
                         code: .authenticationRequired,
+                        respondingTo: request
+                    )
+                }
+                guard configuration == deliveryConfiguration else {
+                    return .error(
+                        "Federation policy changed during delivery.",
+                        code: .unavailable,
+                        retryable: true,
                         respondingTo: request
                     )
                 }
@@ -1340,20 +1393,20 @@ public final class RelayServer {
                 )
             }
             do {
-                let destinationInfo = try await authenticatedFederationPeer(
+                let destinationPeer = try await authenticatedFederationPeer(
                     destination: read.destination,
                     expectedRelayID: read.destinationRelayID,
                     requiredModule: "nw.net-host",
                     allowedKinds: [.standard, .host]
                 )
                 let destinationResponse = try await RelayClient(
-                    endpoint: read.destination
+                    endpoint: destinationPeer.endpoint
                 ).send(.getNetHostObject(read.request))
                 guard case .netHostObject(
                     let object
                 )? = destinationResponse.successBody,
                 let destinationIdentity =
-                    destinationInfo.relayIdentity else {
+                    destinationPeer.info.relayIdentity else {
                     return forwardedRelayErrorResponse(
                         destinationResponse,
                         respondingTo: request
@@ -1395,20 +1448,20 @@ public final class RelayServer {
                 )
             }
             do {
-                let destinationInfo = try await authenticatedFederationPeer(
+                let destinationPeer = try await authenticatedFederationPeer(
                     destination: read.destination,
                     expectedRelayID: read.destinationRelayID,
                     requiredModule: "nw.net-host",
                     allowedKinds: [.standard, .host]
                 )
                 let destinationResponse = try await RelayClient(
-                    endpoint: read.destination
+                    endpoint: destinationPeer.endpoint
                 ).send(.resolveNetHostName(read.request))
                 guard case .netHostNameResolution(
                     let resolution
                 )? = destinationResponse.successBody,
                 let destinationIdentity =
-                    destinationInfo.relayIdentity else {
+                    destinationPeer.info.relayIdentity else {
                     return forwardedRelayErrorResponse(
                         destinationResponse,
                         respondingTo: request
@@ -1973,6 +2026,265 @@ public final class RelayServer {
         )
     }
 
+    private func reserveNamespaceAdmission() -> Bool {
+        namespaceAdmissionLock.lock()
+        defer { namespaceAdmissionLock.unlock() }
+        guard namespaceAdmissionsInFlight < 8 else { return false }
+        namespaceAdmissionsInFlight += 1
+        return true
+    }
+
+    private func releaseNamespaceAdmission() {
+        namespaceAdmissionLock.lock()
+        namespaceAdmissionsInFlight -= 1
+        namespaceAdmissionLock.unlock()
+    }
+
+    private func isAdmittedNoctwebNamespaceClaim(
+        _ identity: SignedRelayIdentityClaimV1,
+        configuration: RelayConfiguration
+    ) async throws -> Bool {
+        guard let suffix = identity.claim.noctwebSuffix,
+              identity.claim.federationMode == configuration.federation.mode,
+              identity.claim.federationName == configuration.federation.name,
+              try identity.verifyThrowing(at: Date()) else {
+            return false
+        }
+        if let localIdentity = relayIdentityKeyMaterial,
+           identity.claim.relayID == localIdentity.relayID,
+           identity.claim.signingPublicKey == localIdentity.signingPublicKey,
+           suffix == configuration.noctwebRelaySuffix {
+            return true
+        }
+
+        switch configuration.federation.mode {
+        case .solo:
+            return false
+        case .open:
+            return true
+        case .manual, .curated:
+            break
+        }
+        guard reserveNamespaceAdmission() else {
+            throw NamespaceAdmissionError.busy
+        }
+        defer { releaseNamespaceAdmission() }
+
+        switch configuration.federation.mode {
+        case .manual:
+            for endpoint in manualTrustedEndpoints(
+                for: identity,
+                configuration: configuration
+            ) {
+                if await liveFederationIdentityMatches(
+                    identity,
+                    at: endpoint,
+                    configuration: configuration,
+                    requireSuffix: true
+                ) {
+                    return true
+                }
+            }
+            return false
+        case .curated:
+            let directories = await curatedAdmissionDirectories(
+                configuration: configuration
+            )
+            let quorum = configuration.curatedCoordinatorQuorum
+            for advertised in identity.claim.advertisedEndpoints {
+                let endorsements = directories.compactMap { directory in
+                    let records = directory.records.filter { record in
+                        namespaceDirectoryRecord(
+                            record,
+                            admits: identity,
+                            at: advertised,
+                            federation: configuration.federation
+                        )
+                    }
+                    return records.isEmpty ? nil : records
+                }
+                if endorsements.count >= quorum,
+                   let selected = Self.endpointConstrainedByTrustedPins(
+                    requested: advertised,
+                    trusted: endorsements.flatMap { $0.map(\.endpoint) }
+                   ),
+                   await liveFederationIdentityMatches(
+                    identity,
+                    at: selected,
+                    configuration: configuration,
+                    requireSuffix: true
+                   ) {
+                    return true
+                }
+            }
+            return false
+        case .solo, .open:
+            return false
+        }
+    }
+
+    private func manualTrustedEndpoints(
+        for identity: SignedRelayIdentityClaimV1,
+        configuration: RelayConfiguration
+    ) -> [RelayEndpoint] {
+        var seen = Set<String>()
+        let advertised = Set(
+            identity.claim.advertisedEndpoints.map(endpointKey)
+        )
+        return configuration.federationAllowList.filter { configured in
+            let key = endpointKey(configured)
+            return advertised.contains(key) && seen.insert(key).inserted
+        }
+    }
+
+    private func liveFederationIdentityMatches(
+        _ identity: SignedRelayIdentityClaimV1,
+        at endpoint: RelayEndpoint,
+        configuration: RelayConfiguration,
+        requireSuffix: Bool
+    ) async -> Bool {
+        guard permitsFederationTransport(
+            endpoint,
+            configuration: configuration
+        ),
+        let info = try? await fetchRelayInfo(endpoint: endpoint),
+        info.isStructurallyValid,
+        info.kind == identity.claim.relayKind,
+        info.federation.mode == configuration.federation.mode,
+        info.federation.name == configuration.federation.name,
+        let live = info.relayIdentity,
+        (try? live.verifyThrowing(at: Date())) == true,
+        live.claim.relayID == identity.claim.relayID,
+        live.claim.signingPublicKey == identity.claim.signingPublicKey,
+        (!requireSuffix
+            || live.claim.noctwebSuffix == identity.claim.noctwebSuffix),
+        live.claim.advertisedEndpoints.contains(where: {
+            endpointKey($0) == endpointKey(endpoint)
+        }) else {
+            return false
+        }
+        return true
+    }
+
+    private func namespaceDirectoryRecord(
+        _ record: FederationNodeRecord,
+        admits identity: SignedRelayIdentityClaimV1,
+        at endpoint: RelayEndpoint,
+        federation: FederationDescriptor
+    ) -> Bool {
+        guard let listed = validatedDirectoryIdentity(
+            record,
+            at: endpoint,
+            federation: federation
+        ) else {
+            return false
+        }
+        return listed.claim.relayID == identity.claim.relayID
+            && listed.claim.signingPublicKey == identity.claim.signingPublicKey
+            && listed.claim.noctwebSuffix == identity.claim.noctwebSuffix
+            && listed.claim.relayKind == identity.claim.relayKind
+    }
+
+    private func validatedDirectoryIdentity(
+        _ record: FederationNodeRecord,
+        at endpoint: RelayEndpoint,
+        federation: FederationDescriptor
+    ) -> SignedRelayIdentityClaimV1? {
+        guard endpointKey(record.endpoint) == endpointKey(endpoint),
+              record.expiresAt > Date(),
+              record.relayInfo.isStructurallyValid,
+              record.relayInfo.federation.mode == federation.mode,
+              record.relayInfo.federation.name == federation.name,
+              let listed = record.relayInfo.relayIdentity,
+              (try? listed.verifyThrowing(at: Date())) == true,
+              listed.claim.advertisedEndpoints.contains(where: {
+                  endpointKey($0) == endpointKey(endpoint)
+              }) else {
+            return nil
+        }
+        return listed
+    }
+
+    private func curatedAdmissionDirectories(
+        configuration: RelayConfiguration
+    ) async -> [(signingKey: Data, records: [FederationNodeRecord])] {
+        let request = ListFederationNodesRequest(
+            mode: .curated,
+            federationName: configuration.federation.name,
+            onlyHealthy: true,
+            maxStalenessSeconds:
+                configuration.coordinatorDirectoryMaxStalenessSeconds,
+            requireSignedSnapshot: true
+        )
+        var localDirectory: (
+            signingKey: Data, records: [FederationNodeRecord]
+        )?
+        if configuration.kind == .coordinator {
+            guard let signingKey = coordinatorDirectoryPublicKey else {
+                return []
+            }
+            // The registration-authenticated local roster is this
+            // coordinator's one endorsement, even when quorum is higher.
+            localDirectory = (
+                signingKey: signingKey,
+                records: await store.listFederationNodes(request)
+            )
+        }
+        var seenEndpoints = Set<String>()
+        let coordinators = (configuration.federationCoordinatorEndpoints ?? [])
+            .filter { endpoint in
+                guard let key = endpoint.directorySigningPublicKey,
+                      permitsFederationTransport(
+                          endpoint,
+                          configuration: configuration
+                      ),
+                      !key.isEmpty,
+                      seenEndpoints.insert(endpointKey(endpoint)).inserted else {
+                    return false
+                }
+                return true
+            }
+        var possibleSigners = Set(
+            coordinators.compactMap(\.directorySigningPublicKey)
+        )
+        if let localDirectory {
+            possibleSigners.insert(localDirectory.signingKey)
+        }
+        guard possibleSigners.count
+            >= configuration.curatedCoordinatorQuorum else {
+            return []
+        }
+        return await withTaskGroup(
+            of: (signingKey: Data, records: [FederationNodeRecord])?.self
+        ) { group in
+            for coordinator in coordinators {
+                group.addTask { [self] in
+                    guard let signingKey = coordinator.directorySigningPublicKey,
+                          let records = try? await fetchValidatedCoordinatorNodes(
+                        from: coordinator,
+                        request: request
+                    ) else {
+                        return nil
+                    }
+                    return (signingKey: signingKey, records: records)
+                }
+            }
+            var fetched: [Data: [FederationNodeRecord]] = [:]
+            if let localDirectory, !localDirectory.records.isEmpty {
+                fetched[localDirectory.signingKey] = localDirectory.records
+            }
+            for await directory in group {
+                guard let directory,
+                      !directory.records.isEmpty else {
+                    continue
+                }
+                fetched[directory.signingKey, default: []]
+                    .append(contentsOf: directory.records)
+            }
+            return fetched.map { (signingKey: $0.key, records: $0.value) }
+        }
+    }
+
     private func makeNoctwebNamespaceSnapshot(
         for request: NoctwebNamespaceSnapshotRequestV1,
         at now: Date = Date()
@@ -1983,80 +2295,7 @@ public final class RelayServer {
             throw RelayNetworkError.invalidResponse
         }
 
-        var identities: [SignedRelayIdentityClaimV1] = [
-            try makeCurrentSignedRelayIdentity(at: now)
-        ]
-        let directoryRequest = ListFederationNodesRequest(
-            mode: configuration.federation.mode,
-            federationName: configuration.federation.name,
-            onlyHealthy: true,
-            maxStalenessSeconds:
-                configuration.coordinatorDirectoryMaxStalenessSeconds,
-            requireSignedSnapshot:
-                configuration.federation.mode == .manual
-                    ? false
-                    : configuration.curatedRequireSignedDirectory
-        )
-        let records: [FederationNodeRecord]
-        if configuration.kind == .coordinator {
-            records = await store.listFederationNodes(directoryRequest)
-        } else if configuration.federation.mode == .solo {
-            records = []
-        } else {
-            records = (try? await fetchCoordinatorNodeDirectory(
-                request: directoryRequest
-            )) ?? []
-        }
-        identities.append(contentsOf: records.compactMap {
-            $0.relayInfo.relayIdentity
-        })
-
-        if configuration.federation.mode == .manual {
-            for endpoint in configuration.federationAllowList {
-                if let advertised = configuration.advertisedEndpoint,
-                   endpointKey(endpoint) == endpointKey(advertised) {
-                    continue
-                }
-                guard let info = try? await fetchRelayInfo(endpoint: endpoint),
-                      info.federation == configuration.federation,
-                      let identity = info.relayIdentity else {
-                    continue
-                }
-                identities.append(identity)
-            }
-        }
-
-        var latestByRelayID:
-            [RelayIdentityIDV1: SignedRelayIdentityClaimV1] = [:]
-        for identity in identities {
-            guard identity.claim.federationMode
-                    == configuration.federation.mode,
-                  identity.claim.federationName
-                    == configuration.federation.name,
-                  identity.claim.noctwebSuffix != nil,
-                  try identity.verifyThrowing(at: now) else {
-                continue
-            }
-            let relayID = identity.claim.relayID
-            if let existing = latestByRelayID[relayID],
-               existing.claim.sequence >= identity.claim.sequence {
-                continue
-            }
-            latestByRelayID[relayID] = identity
-        }
-
-        for identity in latestByRelayID.values.sorted(by: {
-            if $0.claim.sequence != $1.claim.sequence {
-                return $0.claim.sequence < $1.claim.sequence
-            }
-            return $0.claim.relayID < $1.claim.relayID
-        }) {
-            _ = try await noctwebNamespaceRuntime.claim(
-                identity,
-                now: now
-            )
-        }
-        await publishNoctwebNamespaceState()
+        // Snapshot reads must not bypass claim admission or mutate ownership.
         let ledger = try NoctwebNamespaceLedgerV1(
             records: await noctwebNamespaceRuntime.records()
         )
@@ -2084,17 +2323,35 @@ public final class RelayServer {
         expectedRelayID: RelayIdentityIDV1,
         requiredModule: String = "nw.federation-forward",
         allowedKinds: Set<RelayKind> = [.standard]
-    ) async throws -> RelayInfo {
-        guard permitsFederationTransport(destination) else {
-            throw RelayNetworkError.invalidResponse
-        }
+    ) async throws -> (info: RelayInfo, endpoint: RelayEndpoint) {
+        let policy = configuration
         let membership = try await federationMembershipRecord(
-            destination: destination
+            destination: destination,
+            expectedRelayID: expectedRelayID
         )
-        guard let liveInfo = try await fetchRelayInfo(endpoint: destination),
+        let trustedEndpoint: RelayEndpoint
+        if policy.federation.mode == .manual {
+            guard let allowed = policy.federationAllowList.first(where: {
+                endpointKey($0) == endpointKey(destination)
+            }) else {
+                throw RelayNetworkError.invalidResponse
+            }
+            trustedEndpoint = allowed
+        } else {
+            trustedEndpoint = membership?.endpoint ?? destination
+        }
+        guard let selectedEndpoint = Self.endpointConstrainedByTrustedPin(
+            requested: destination,
+            trusted: trustedEndpoint
+        ),
+        permitsFederationTransport(
+            selectedEndpoint,
+            configuration: policy
+        ),
+        let liveInfo = try await fetchRelayInfo(endpoint: selectedEndpoint),
               try isValidFederationPeerInfo(
                   liveInfo,
-                  endpoint: destination,
+                  endpoint: selectedEndpoint,
                   expectedRelayID: expectedRelayID,
                   requiredModule: requiredModule,
                   allowedKinds: allowedKinds
@@ -2110,11 +2367,56 @@ public final class RelayServer {
                 throw RelayNetworkError.invalidResponse
             }
         }
-        return liveInfo
+        guard configuration == policy else {
+            throw RelayNetworkError.invalidResponse
+        }
+        return (liveInfo, selectedEndpoint)
+    }
+
+    static func endpointConstrainedByTrustedPin(
+        requested: RelayEndpoint,
+        trusted: RelayEndpoint
+    ) -> RelayEndpoint? {
+        guard requested.host.lowercased() == trusted.host.lowercased(),
+              requested.port == trusted.port,
+              requested.useTLS == trusted.useTLS,
+              requested.transport == trusted.transport else {
+            return nil
+        }
+        if let requestedPin = requested.tlsCertificateFingerprintSHA256,
+           let trustedPin = trusted.tlsCertificateFingerprintSHA256,
+           requestedPin != trustedPin {
+            return nil
+        }
+        var selected = trusted
+        if selected.tlsCertificateFingerprintSHA256 == nil {
+            selected.tlsCertificateFingerprintSHA256 =
+                requested.tlsCertificateFingerprintSHA256
+        }
+        return selected
+    }
+
+    static func endpointConstrainedByTrustedPins(
+        requested: RelayEndpoint,
+        trusted: [RelayEndpoint]
+    ) -> RelayEndpoint? {
+        guard !trusted.isEmpty else { return nil }
+        var selected = requested
+        for endpoint in trusted {
+            guard let next = endpointConstrainedByTrustedPin(
+                requested: selected,
+                trusted: endpoint
+            ) else {
+                return nil
+            }
+            selected = next
+        }
+        return selected
     }
 
     private func federationMembershipRecord(
-        destination: RelayEndpoint
+        destination: RelayEndpoint,
+        expectedRelayID: RelayIdentityIDV1
     ) async throws -> FederationNodeRecord? {
         let configuration = configuration
         guard configuration.federation.mode != .solo else {
@@ -2127,6 +2429,56 @@ public final class RelayServer {
                 throw RelayNetworkError.invalidResponse
             }
             return nil
+        }
+        if configuration.federation.mode == .curated {
+            let directories = await curatedAdmissionDirectories(
+                configuration: configuration
+            )
+            var endorsements: [
+                CuratedMemberIdentityKey: [Data: [FederationNodeRecord]]
+            ] = [:]
+            for directory in directories {
+                for record in directory.records {
+                    guard let listed = validatedDirectoryIdentity(
+                        record,
+                        at: destination,
+                        federation: configuration.federation
+                    ), listed.claim.relayID == expectedRelayID else {
+                        continue
+                    }
+                    let key = CuratedMemberIdentityKey(
+                        signingPublicKey: listed.claim.signingPublicKey,
+                        suffix: listed.claim.noctwebSuffix,
+                        kind: listed.claim.relayKind
+                    )
+                    endorsements[key, default: [:]][
+                        directory.signingKey,
+                        default: []
+                    ].append(record)
+                }
+            }
+            for recordsBySigner in endorsements.values {
+                if recordsBySigner.count
+                    >= configuration.curatedCoordinatorQuorum,
+                   let candidate = recordsBySigner.values.first?.first,
+                   let selected = Self.endpointConstrainedByTrustedPins(
+                    requested: destination,
+                    trusted: recordsBySigner.values.flatMap {
+                        $0.map(\.endpoint)
+                    }
+                   ) {
+                    guard self.configuration == configuration else {
+                        throw RelayNetworkError.invalidResponse
+                    }
+                    return FederationNodeRecord(
+                        endpoint: selected,
+                        relayInfo: candidate.relayInfo,
+                        lastHeartbeatAt: candidate.lastHeartbeatAt,
+                        expiresAt: candidate.expiresAt
+                    )
+                }
+            }
+            throw RelayNetworkError.invalidResponse
         }
         let records = try await fetchCoordinatorNodeDirectory(
             request: ListFederationNodesRequest(
@@ -2156,11 +2508,27 @@ public final class RelayServer {
             return false
         }
         if configuration.federation.mode == .manual {
-            return identity.claim.advertisedEndpoints.contains { advertised in
-                configuration.federationAllowList.contains {
-                    endpointKey($0) == endpointKey(advertised)
+            for endpoint in manualTrustedEndpoints(
+                for: identity,
+                configuration: configuration
+            ) {
+                if await liveFederationIdentityMatches(
+                    identity,
+                    at: endpoint,
+                    configuration: configuration,
+                    requireSuffix: false
+                ) {
+                    return self.configuration == configuration
                 }
             }
+            return false
+        }
+        if configuration.federation.mode == .curated {
+            let admitted = try await isAdmittedNoctwebNamespaceClaim(
+                identity,
+                configuration: configuration
+            )
+            return admitted && self.configuration == configuration
         }
         let records = try await fetchCoordinatorNodeDirectory(
             request: ListFederationNodesRequest(
@@ -2211,6 +2579,13 @@ public final class RelayServer {
     }
 
     private func permitsFederationTransport(_ endpoint: RelayEndpoint) -> Bool {
+        permitsFederationTransport(endpoint, configuration: configuration)
+    }
+
+    private func permitsFederationTransport(
+        _ endpoint: RelayEndpoint,
+        configuration: RelayConfiguration
+    ) -> Bool {
         if endpoint.useTLS {
             return true
         }
@@ -3034,6 +3409,16 @@ public final class RelayServer {
         defer { coordinatorDirectoryCacheLock.unlock() }
         return coordinatorDirectoryCache
     }
+}
+
+private enum NamespaceAdmissionError: Error {
+    case busy
+}
+
+private struct CuratedMemberIdentityKey: Hashable {
+    let signingPublicKey: Data
+    let suffix: NoctwebRelaySuffixV1?
+    let kind: RelayKind
 }
 
 private actor NoctwebNamespaceRuntimeV1 {

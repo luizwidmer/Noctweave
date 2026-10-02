@@ -546,6 +546,55 @@ final class RelayStoreCurrentTests: XCTestCase {
         XCTAssertEqual(reloaded.pinnedCoordinatorPublicKey(for: endpoint), publicKey)
     }
 
+    func testConcurrentCoordinatorFirstPinsCannotReplaceOneAnother() throws {
+        let store = RelayStore(fileURL: nil, temporalBucketSeconds: 0)
+        let endpoint = RelayEndpoint(
+            host: "127.0.0.1", port: 9340, transport: .tcp
+        )
+        let first = Data(
+            repeating: 0x41,
+            count: OQSSignatureVerifier.mlDSA65PublicKeyBytes
+        )
+        let second = Data(
+            repeating: 0x42,
+            count: OQSSignatureVerifier.mlDSA65PublicKeyBytes
+        )
+        let keys = [first, second]
+        let resultLock = NSLock()
+        var successes = 0
+        var failures: [RelayStoreError] = []
+        DispatchQueue.concurrentPerform(iterations: keys.count) { index in
+            do {
+                try store.pinCoordinatorPublicKey(keys[index], for: endpoint)
+                resultLock.lock()
+                successes += 1
+                resultLock.unlock()
+            } catch {
+                resultLock.lock()
+                if let storeError = error as? RelayStoreError {
+                    failures.append(storeError)
+                }
+                resultLock.unlock()
+            }
+        }
+        XCTAssertEqual(successes, 1)
+        XCTAssertEqual(failures, [.invalidCoordinatorPublicKey])
+        let pinned = try XCTUnwrap(
+            store.pinnedCoordinatorPublicKey(for: endpoint)
+        )
+        XCTAssertTrue(keys.contains(pinned))
+        XCTAssertNoThrow(try store.pinCoordinatorPublicKey(pinned, for: endpoint))
+        let replacement = pinned == first ? second : first
+        XCTAssertThrowsError(
+            try store.pinCoordinatorPublicKey(replacement, for: endpoint)
+        ) { error in
+            XCTAssertEqual(
+                error as? RelayStoreError, .invalidCoordinatorPublicKey
+            )
+        }
+        XCTAssertEqual(store.pinnedCoordinatorPublicKey(for: endpoint), pinned)
+    }
+
     private func writeRichSnapshot(to url: URL) throws {
         let store = RelayStore(fileURL: url, temporalBucketSeconds: 0)
         let now = Date(timeIntervalSince1970: floor(Date().timeIntervalSince1970))

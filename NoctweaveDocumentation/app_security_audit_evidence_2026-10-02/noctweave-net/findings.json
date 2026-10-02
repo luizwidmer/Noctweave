@@ -1,0 +1,47 @@
+[
+  {
+    "verdict": "needs_validation",
+    "fingerprint": "noctweb-lab:ancestor-symlink-import",
+    "title": "Lab import can follow a swapped ancestor outside the selected project",
+    "description": "A deterministic unsandboxed importer test read dummy bytes from a sibling directory after a writable ancestor was replaced by a symlink between enumeration and open. The shipped macOS app's effective sandbox access to that sibling has not been demonstrated, so private-data disclosure through the signed release remains unverified.",
+    "claimed_root_cause": "The original importer rejected symlinks while enumerating but reopened each full path later with O_NOFOLLOW only on the final component.",
+    "trace": [
+      {
+        "kind": "entrypoint",
+        "file": "apps/noctweb-lab/Sources/NoctwebLab/Models/AppModel.swift",
+        "line": 1026,
+        "scope": "Noctweb Lab selected-project import",
+        "description": "The app imports the user-selected directory into site source files."
+      },
+      {
+        "kind": "propagation",
+        "file": "apps/noctweb-lab/Sources/NoctwebLab/Models/WebsiteProjectBuilder.swift",
+        "line": 142,
+        "scope": "Directory enumeration in the 6e77f94 baseline",
+        "description": "The original enumeration checked a file URL's symlink status before a later read."
+      },
+      {
+        "kind": "sink",
+        "file": "apps/noctweb-lab/Sources/NoctwebLab/Models/WebsiteProjectBuilder.swift",
+        "line": 248,
+        "scope": "File open in the 6e77f94 baseline",
+        "description": "The original full-path open followed a replaced parent symlink while O_NOFOLLOW protected only the leaf."
+      }
+    ],
+    "evidence": [
+      {
+        "file": "apps/noctweb-lab/Tests/NoctwebLabAppTests/AppModelTests.swift",
+        "line": 1112,
+        "description": "The patched-tree regression fixture swaps dist/assets for a symlink to a sibling containing dummy-private-data; the original importer read the sibling bytes and the repaired importer rejects the read."
+      }
+    ],
+    "blockers": [
+      "The effective signed-app sandbox and security-scoped bookmark behavior were not exercised with the ancestor-swap fixture.",
+      "No protected sibling read or unintended publication was demonstrated in the signed release."
+    ],
+    "validation_plan": {
+      "local": "Run the same dummy ancestor-swap import inside a development-signed Lab app with its release-equivalent App Sandbox entitlements and a user-selected directory; inspect whether the sibling is readable and whether an imported draft contains those bytes.",
+      "deployment": "Verify the final signed release entitlements and repeat only with disposable files under an authorized test account before asserting a release disclosure path."
+    }
+  }
+]

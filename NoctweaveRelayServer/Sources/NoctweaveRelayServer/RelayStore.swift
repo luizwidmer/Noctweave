@@ -925,9 +925,14 @@ final class RelayStore {
                 throw RelayStoreError.invalidCoordinatorPublicKey
             }
             let storageKey = federationNodeKey(endpoint)
-            guard coordinatorPinnedPublicKeys[storageKey] != nil
-                    || coordinatorPinnedPublicKeys.count
-                        < RelayStoreCurrentLimits.maximumCoordinatorPinnedPublicKeys else {
+            if let pinned = coordinatorPinnedPublicKeys[storageKey] {
+                guard pinned == key else {
+                    throw RelayStoreError.invalidCoordinatorPublicKey
+                }
+                return
+            }
+            guard coordinatorPinnedPublicKeys.count
+                    < RelayStoreCurrentLimits.maximumCoordinatorPinnedPublicKeys else {
                 throw RelayStoreError.relayCapacityExceeded
             }
             coordinatorPinnedPublicKeys[storageKey] = key
