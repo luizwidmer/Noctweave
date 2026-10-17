@@ -131,6 +131,25 @@ final class AppLockDuressTests: XCTestCase {
         XCTAssertFalse(String(decoding: encoded, as: UTF8.self).contains(erase.id.uuidString.lowercased()))
     }
 
+    func testRemovingAnUnrelatedPersonaKeepsSelectedDecoyChatsReachable() throws {
+        var state = try ClientState(displayName: "Retained persona")
+        let retainedID = state.activePersonaID
+        let relationship = try makeRelationship()
+        try state.updateActivePersona { try $0.upsert(relationship: relationship) }
+        let deleted = try state.addPersona(displayName: "Delete")
+        try state.selectPersona(retainedID)
+        let password = "future fixture password"
+        let plan = try AppLockDuressPassword.makePlan(password: password, label: "Retain chat", action: .decoy,
+            decoyChats: [.init(personaID: retainedID, kind: .relationship, chatID: relationship.id)])
+        state.appLock = AppLockSettings(mode: .biometrics, duressPlans: [plan])
+
+        try state.removePersona(deleted.id)
+        let replacement = try state.replacementAfterDuress(plan: plan, password: password)
+
+        XCTAssertEqual(replacement.personas.map(\.id), [retainedID])
+        XCTAssertEqual(replacement.personas[0].relationships, [relationship])
+    }
+
     func testRetainedChatCanEncryptAndReceiveNewMessagesAfterReopen() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }

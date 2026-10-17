@@ -833,7 +833,7 @@ struct NoctwebPublisherSurface {
           if (typeof project.ctaEnabled !== "boolean") {
             project.ctaEnabled = Boolean(project.buttonText || project.buttonURL);
           }
-          if (!project.html || !project.css || !project.js) generateSource();
+          if (!project.customCode && (!project.html || !project.css || !project.js)) generateSource();
           identity = await loadOrCreateIdentity(project.publicationID);
           hostedCopies = normalizeHostingLedger(
             await readRecord("publications", project.publicationID)
@@ -955,7 +955,7 @@ struct NoctwebPublisherSurface {
           scheduleSave();
           updatePreview();
         });
-        elements.refreshPreviewButton.addEventListener("click", updatePreview);
+        elements.refreshPreviewButton.addEventListener("click", () => updatePreview());
         elements.resetButton.addEventListener("click", resetProject);
         elements.hostButton.addEventListener("click", () => openDialog("host"));
         elements.unhostButton.addEventListener("click", () => openDialog("release"));

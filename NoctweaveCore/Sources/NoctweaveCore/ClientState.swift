@@ -5,6 +5,7 @@ public enum ClientStateError: Error, Equatable {
     case personaNotFound
     case personaCapacityReached
     case activePersonaCannotBeArchived
+    case activePersonaCannotBeRemoved
     case relayPreferenceNotFound
     case onboardingAcceptanceRequired
 }
@@ -768,6 +769,26 @@ public struct ClientState: Codable, Equatable {
         guard try isStructurallyValidThrowing else {
             throw ClientStateError.invalidState
         }
+    }
+
+    /// Removes an inactive local persona without recreating any surviving
+    /// persona or changing its relationship/group authorities and local IDs.
+    /// This is a local deletion, not a protocol burn or a remote revocation.
+    public mutating func removePersona(_ id: UUID) throws {
+        guard personas.contains(where: { $0.id == id }) else {
+            throw ClientStateError.personaNotFound
+        }
+        guard id != activePersonaID else {
+            throw ClientStateError.activePersonaCannotBeRemoved
+        }
+        var candidate = self
+        candidate.personas.removeAll { $0.id == id }
+        candidate.preferredRelayPreferenceIDsByPersonaID.removeValue(forKey: id)
+        candidate.archivedPersonaIDs.remove(id)
+        guard try candidate.isStructurallyValidThrowing else {
+            throw ClientStateError.invalidState
+        }
+        self = candidate
     }
 
     public mutating func selectPersona(_ id: UUID) throws {

@@ -32,6 +32,12 @@ let client = try HeadlessMessagingClient(
 persona has no protocol key or network identity. Live authority exists only in
 `PairwiseRelationshipV2` and group runtime records.
 
+Use `try state.removePersona(inactivePersonaID)` for an explicit local deletion
+of an inactive persona, then save the aggregate with the expected prior state.
+It preserves every surviving persona's ID, archive marker, preferences, and
+protocol state; removing the active persona is rejected. This local operation
+does not burn relationships or revoke remote group memberships.
+
 Encrypted state is generation-bound to a separate local rollback anchor. On
 Apple hosts the default anchor is a non-synchronizing Keychain item scoped to
 the resolved state path. Other hosts must supply a

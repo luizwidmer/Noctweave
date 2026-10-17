@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
 import { readFile } from "node:fs/promises";
+import relayConfiguration from "../../electrobun.config.js";
 
 test("relay desktop packages source and keeps Docker and admin boundaries explicit", async () => {
   const [config, backend, wrapper, html, styles, view, relayIcon] = await Promise.all([
@@ -15,7 +16,8 @@ test("relay desktop packages source and keeps Docker and admin boundaries explic
   expect(config).toMatch(/icon:\s*"desktop\/assets\/relay-icon\.png"/);
   expect(config).toMatch(/icon:\s*"desktop\/assets\/relay-icon\.ico"/);
   expect((config.match(/bundleCEF:\s*false/g) ?? []).length).toBe(3);
-  expect((config.match(/desktop\/scripts\/install-mac-icon\.ts/g) ?? []).length).toBe(1);
+  expect(relayConfiguration.scripts.postBuild).toBe("desktop/scripts/install-mac-icon.ts");
+  expect(relayConfiguration.scripts.postWrap).toBe("desktop/scripts/install-mac-icon.ts");
   expect(backend).toMatch(/DockerRelayManager/);
   expect(backend).toMatch(/PATHS\.RESOURCES_FOLDER, "app", "relay-source"/);
   for (const source of ["Dockerfile", "Package.swift", "Package.resolved", "Sources", "Tests"]) {
