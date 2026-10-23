@@ -36,6 +36,7 @@ let package = Package(
                 "NoctweaveRelayServer",
                 "CSQLite",
                 .product(name: "NIO", package: "swift-nio"),
+                .product(name: "NIOEmbedded", package: "swift-nio"),
                 .product(name: "NIOFoundationCompat", package: "swift-nio"),
                 .product(name: "NIOPosix", package: "swift-nio")
             ]

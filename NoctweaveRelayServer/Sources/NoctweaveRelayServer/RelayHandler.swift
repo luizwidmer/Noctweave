@@ -145,7 +145,12 @@ final class NoctwebNamespaceAdvertiser: @unchecked Sendable {
                 advertisedEndpoints: [advertisedEndpoint],
                 hostSigningPublicKey: netHostStore?.signingPublicKey
             )
-            try store.claimNoctwebNamespace(identity)
+            guard let _ = try configurationStore.withUnchanged(
+                configuration,
+                perform: { try store.claimNoctwebNamespace(identity) }
+            ) else {
+                return
+            }
             RelayHandler(
                 store: store,
                 maxMessageBytes: maxMessageBytes,
@@ -391,10 +396,29 @@ final class RelayHandler: ChannelInboundHandler {
                             at: now
                         )
                     if identity.claim.noctwebSuffix != nil {
-                        try self.store.claimNoctwebNamespace(
-                            identity,
-                            now: now
-                        )
+                        if let configurationStore = self.relayConfigurationStore {
+                            guard let _ = try configurationStore.withUnchanged(
+                                relayConfiguration,
+                                perform: {
+                                    try self.store.claimNoctwebNamespace(
+                                        identity,
+                                        now: now
+                                    )
+                                }
+                            ) else {
+                                return .error(
+                                    "Noctweb namespace policy changed during snapshot.",
+                                    code: .unavailable,
+                                    retryable: true,
+                                    respondingTo: request
+                                )
+                            }
+                        } else {
+                            try self.store.claimNoctwebNamespace(
+                                identity,
+                                now: now
+                            )
+                        }
                     }
                     let ledger = try NoctwebNamespaceLedgerV1(
                         records: self.store.noctwebNamespaceRecords(
@@ -437,20 +461,41 @@ final class RelayHandler: ChannelInboundHandler {
             func applyClaim() -> RelayResponse {
                 do {
                     let suffix = claim.identity.claim.noctwebSuffix!
-                    let previous = store.noctwebNamespaceRecord(
-                        for: suffix
+                    func mutateClaim() throws -> (
+                        record: NoctwebNamespaceRecordV1?, changed: Bool
+                    ) {
+                        let previous = store.noctwebNamespaceRecord(for: suffix)
+                        try store.claimNoctwebNamespace(claim.identity)
+                        let record = store.noctwebNamespaceRecord(for: suffix)
+                        return (record, previous != record)
+                    }
+                    let mutation: (
+                        record: NoctwebNamespaceRecordV1?, changed: Bool
                     )
-                    try store.claimNoctwebNamespace(claim.identity)
-                    guard let record = store.noctwebNamespaceRecord(
-                            for: suffix
-                          ) else {
+                    if let configurationStore = relayConfigurationStore {
+                        guard let accepted = try configurationStore.withUnchanged(
+                            relayConfiguration,
+                            perform: mutateClaim
+                        ) else {
+                            return .error(
+                                "Noctweb namespace policy changed during admission.",
+                                code: .unavailable,
+                                retryable: true,
+                                respondingTo: request
+                            )
+                        }
+                        mutation = accepted
+                    } else {
+                        mutation = try mutateClaim()
+                    }
+                    guard let record = mutation.record else {
                         return .error(
                             "Noctweb namespace claim was not retained.",
                             code: .internalFailure,
                             respondingTo: request
                         )
                     }
-                    if previous != record {
+                    if mutation.changed {
                         propagateNoctwebNamespaceMutation(
                             request,
                             on: context.eventLoop
@@ -530,30 +575,88 @@ final class RelayHandler: ChannelInboundHandler {
                     code: .authenticationRequired
                 )
             }
-            do {
-                try store.rotateNoctwebNamespace(
-                    rotationRequest.rotation,
-                    to: rotationRequest.newIdentity
-                )
-                guard let suffix =
-                    rotationRequest.newIdentity.claim.noctwebSuffix,
-                    let record = store.noctwebNamespaceRecord(
-                        for: suffix
-                    ) else {
-                    return failure(
-                        "Noctweb namespace rotation was not retained.",
-                        code: .internalFailure
+            let eventLoop = context.eventLoop
+            return isAdmittedNamespaceClaim(
+                rotationRequest.newIdentity,
+                configuration: relayConfiguration,
+                on: eventLoop
+            ).map { admitted in
+                guard admitted else {
+                    return .error(
+                        "Noctweb namespace successor is not an authenticated federation member.",
+                        code: .authenticationRequired,
+                        respondingTo: request
                     )
                 }
-                propagateNoctwebNamespaceMutation(
-                    request,
-                    on: context.eventLoop
-                )
-                return success(.noctwebNamespaceRecord(record))
-            } catch {
+                guard self.currentRelayConfiguration == relayConfiguration else {
+                    return .error(
+                        "Noctweb namespace policy changed during rotation admission.",
+                        code: .unavailable,
+                        retryable: true,
+                        respondingTo: request
+                    )
+                }
+                do {
+                    func mutateRotation() throws -> NoctwebNamespaceRecordV1? {
+                        try self.store.rotateNoctwebNamespace(
+                            rotationRequest.rotation,
+                            to: rotationRequest.newIdentity
+                        )
+                        return rotationRequest.newIdentity.claim.noctwebSuffix.flatMap {
+                            self.store.noctwebNamespaceRecord(for: $0)
+                        }
+                    }
+                    let retainedRecord: NoctwebNamespaceRecordV1?
+                    if let configurationStore = self.relayConfigurationStore {
+                        guard let accepted = try configurationStore.withUnchanged(
+                            relayConfiguration,
+                            perform: mutateRotation
+                        ) else {
+                            return .error(
+                                "Noctweb namespace policy changed during rotation admission.",
+                                code: .unavailable,
+                                retryable: true,
+                                respondingTo: request
+                            )
+                        }
+                        retainedRecord = accepted
+                    } else {
+                        retainedRecord = try mutateRotation()
+                    }
+                    guard let record = retainedRecord else {
+                        return .error(
+                            "Noctweb namespace rotation was not retained.",
+                            code: .internalFailure,
+                            respondingTo: request
+                        )
+                    }
+                    self.propagateNoctwebNamespaceMutation(
+                        request,
+                        on: eventLoop
+                    )
+                    return .success(
+                        .noctwebNamespaceRecord(record),
+                        respondingTo: request
+                    )
+                } catch {
+                    return .error(
+                        "Noctweb namespace rotation proof is invalid.",
+                        code: .authenticationRequired,
+                        respondingTo: request
+                    )
+                }
+            }.flatMapError { error in
+                if case FederationAdmissionError.busy = error {
+                    return failure(
+                        "Noctweb namespace membership verification is busy.",
+                        code: .rateLimited,
+                        retryable: true
+                    )
+                }
                 return failure(
-                    "Noctweb namespace rotation proof is invalid.",
-                    code: .authenticationRequired
+                    "Noctweb namespace membership verification is unavailable.",
+                    code: .unavailable,
+                    retryable: true
                 )
             }
         case .releaseNoctwebNamespace(let release):
@@ -1150,7 +1253,27 @@ final class RelayHandler: ChannelInboundHandler {
                     )
                 }
                 do {
-                    let node = try self.store.registerFederationNode(registration)
+                    let node: FederationNodeRecord
+                    if let configurationStore = self.relayConfigurationStore {
+                        guard let accepted = try configurationStore.withUnchanged(
+                            relayConfiguration,
+                            perform: {
+                                try self.store.registerFederationNode(registration)
+                            }
+                        ) else {
+                            return eventLoop.makeSucceededFuture(
+                                .error(
+                                    "Coordinator policy changed during registration.",
+                                    code: .unavailable,
+                                    retryable: true,
+                                    respondingTo: request
+                                )
+                            )
+                        }
+                        node = accepted
+                    } else {
+                        node = try self.store.registerFederationNode(registration)
+                    }
                     return eventLoop.makeSucceededFuture(
                         .success(.federationNodes(.init(nodes: [node])), respondingTo: request)
                     )

@@ -296,6 +296,11 @@ endpoint or receipt.
 The federation-local Noctweb namespace maps one restricted lowercase ASCII
 suffix to one relay identity. Ownership survives relay and claim expiry.
 Rotation requires one transition signed by both old and new relay keys.
+Before recording a rotation, the receiving relay also admits the successor
+identity under its current federation policy. Manual membership requires a
+matching live allow-listed relay; curated membership requires the configured
+signed coordinator quorum and a matching live relay. A rotation signature
+alone does not grant membership in either trust domain.
 Release creates an irreversible tombstone; the suffix must never be assigned
 again.
 

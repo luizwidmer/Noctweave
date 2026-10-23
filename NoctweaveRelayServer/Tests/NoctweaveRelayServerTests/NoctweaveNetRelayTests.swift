@@ -1714,6 +1714,7 @@ final class NoctweaveNetRelayTests: XCTestCase {
         )
         let firstPort = try reserveRelayTestPort()
         let secondPort = try reserveRelayTestPort()
+        let successorPort = try reserveRelayTestPort()
         let firstEndpoint = RelayEndpoint(
             host: "127.0.0.1",
             port: UInt16(firstPort),
@@ -1722,6 +1723,11 @@ final class NoctweaveNetRelayTests: XCTestCase {
         let secondEndpoint = RelayEndpoint(
             host: "127.0.0.1",
             port: UInt16(secondPort),
+            transport: .tcp
+        )
+        let successorEndpoint = RelayEndpoint(
+            host: "127.0.0.1",
+            port: UInt16(successorPort),
             transport: .tcp
         )
         let suffix = NoctwebRelaySuffixV1(rawValue: ".converge")!
@@ -1736,23 +1742,28 @@ final class NoctweaveNetRelayTests: XCTestCase {
             federationAllowList: [secondEndpoint],
             allowPrivateFederationEndpoints: true
         )
+        let firstConfigurationStore = RelayConfigurationStore(firstConfiguration)
         let first = try NoctweaveNetRelayTCPHarness(
             port: firstPort,
             configuration: firstConfiguration,
-            identity: firstIdentity
+            identity: firstIdentity,
+            configurationStore: firstConfigurationStore
         )
+        let secondConfiguration = RelayConfiguration(
+            kind: .standard,
+            federation: federation,
+            advertisedEndpoint: secondEndpoint,
+            federationAllowList: [firstEndpoint],
+            allowPrivateFederationEndpoints: true
+        )
+        let secondConfigurationStore = RelayConfigurationStore(secondConfiguration)
         let second = try NoctweaveNetRelayTCPHarness(
             port: secondPort,
-            configuration: RelayConfiguration(
-                kind: .standard,
-                federation: federation,
-                advertisedEndpoint: secondEndpoint,
-                federationAllowList: [firstEndpoint],
-                allowPrivateFederationEndpoints: true
-            ),
+            configuration: secondConfiguration,
             identity: RelayIdentityRuntime(
                 keyMaterial: try RelayIdentityKeyMaterialV1.generate()
-            )
+            ),
+            configurationStore: secondConfigurationStore
         )
         defer {
             try? first.shutdown()
@@ -1784,6 +1795,26 @@ final class NoctweaveNetRelayTests: XCTestCase {
                 == oldIdentity.relayID
         })
 
+        let successorConfiguration = RelayConfiguration(
+            kind: .standard,
+            federation: federation,
+            advertisedEndpoint: successorEndpoint,
+            noctwebRelaySuffix: suffix,
+            allowPrivateFederationEndpoints: true
+        )
+        let successor = try NoctweaveNetRelayTCPHarness(
+            port: successorPort,
+            configuration: successorConfiguration,
+            identity: RelayIdentityRuntime(keyMaterial: newIdentity)
+        )
+        defer { try? successor.shutdown() }
+        var updatedFirst = firstConfiguration
+        updatedFirst.federationAllowList = [secondEndpoint, successorEndpoint]
+        firstConfigurationStore.replace(with: updatedFirst)
+        var updatedSecond = secondConfiguration
+        updatedSecond.federationAllowList = [firstEndpoint, successorEndpoint]
+        secondConfigurationStore.replace(with: updatedSecond)
+
         let rotation = try RelayIdentityRotationV1.signed(
             from: oldIdentity,
             to: newIdentity,
@@ -1794,10 +1825,10 @@ final class NoctweaveNetRelayTests: XCTestCase {
             sequence: rotation.sequence,
             relayKind: .standard,
             federation: federation,
-            advertisedEndpoints: [firstEndpoint],
+            advertisedEndpoints: [successorEndpoint],
             noctwebSuffix: suffix,
             capabilities: try XCTUnwrap(
-                firstConfiguration.makeInfo(now: now).protocolCapabilities
+                successorConfiguration.makeInfo(now: now).protocolCapabilities
             ),
             issuedAt: rotation.issuedAt
         )

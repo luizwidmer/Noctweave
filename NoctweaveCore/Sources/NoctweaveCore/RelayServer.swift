@@ -41,19 +41,10 @@ public final class RelayServer {
     private let requestRateLimiter = RelayRequestRateLimiter()
     private let namespaceAdmissionLock = NSLock()
     private var namespaceAdmissionsInFlight = 0
-    private let configurationLock = NSLock()
-    private var relayConfiguration: RelayConfiguration
+    private let configurationGate: NoctwebNamespacePolicyGate
     public var configuration: RelayConfiguration {
-        get {
-            configurationLock.lock()
-            defer { configurationLock.unlock() }
-            return relayConfiguration
-        }
-        set {
-            configurationLock.lock()
-            relayConfiguration = newValue
-            configurationLock.unlock()
-        }
+        get { configurationGate.snapshot() }
+        set { configurationGate.replace(with: newValue) }
     }
     private let listenerQueue = DispatchQueue(label: "NoctweaveCore.RelayServer")
 
@@ -71,7 +62,7 @@ public final class RelayServer {
         self.noctwebHostStore = noctwebHostStore
         self.noctwebDataStore = noctwebDataStore
         self.coturnCredentialIssuer = coturnCredentialIssuer
-        self.relayConfiguration = configuration
+        self.configurationGate = NoctwebNamespacePolicyGate(configuration)
         self.relayIdentityKeyMaterial = relayIdentity
             ?? (try? RelayIdentityKeyMaterialV1.generate())
         let coordinatorKeyMaterial: (privateKey: Data, publicKey: Data)?
@@ -194,18 +185,25 @@ public final class RelayServer {
     }
 
     private func activateConfiguredNoctwebNamespace() async {
-        guard configuration.noctwebRelaySuffix != nil else {
+        let activationConfiguration = configuration
+        guard activationConfiguration.noctwebRelaySuffix != nil else {
             return
         }
         do {
-            let identity = try makeCurrentSignedRelayIdentity()
+            let identity = try makeCurrentSignedRelayIdentity(
+                configuration: activationConfiguration
+            )
             guard let suffix = identity.claim.noctwebSuffix else {
                 return
             }
             let previous = await noctwebNamespaceRuntime.record(
                 for: suffix
             )
-            let record = try await noctwebNamespaceRuntime.claim(identity)
+            let record = try await noctwebNamespaceRuntime.claim(
+                identity,
+                ifConfigurationUnchanged: activationConfiguration,
+                gate: configurationGate
+            )
             if previous != record {
                 await publishNoctwebNamespaceState()
             }
@@ -220,6 +218,8 @@ public final class RelayServer {
                     )
                 )
             )
+        } catch is NoctwebNamespacePolicyChanged {
+            return
         } catch {
             onEvent?(.error(
                 "Configured Noctweb namespace could not be activated."
@@ -289,9 +289,7 @@ public final class RelayServer {
     }
 
     private func mutateConfiguration(_ body: (inout RelayConfiguration) -> Void) {
-        configurationLock.lock()
-        body(&relayConfiguration)
-        configurationLock.unlock()
+        configurationGate.mutate(body)
     }
 
     private func handleTCP(connection: NWConnection) {
@@ -708,7 +706,9 @@ public final class RelayServer {
                     )
                 }
                 let record = try await noctwebNamespaceRuntime.claim(
-                    claim.identity
+                    claim.identity,
+                    ifConfigurationUnchanged: claimConfiguration,
+                    gate: configurationGate
                 )
                 await publishNoctwebNamespaceState()
                 if previous != record {
@@ -716,6 +716,13 @@ public final class RelayServer {
                 }
                 return .success(
                     .noctwebNamespaceRecord(record),
+                    respondingTo: request
+                )
+            } catch is NoctwebNamespacePolicyChanged {
+                return .error(
+                    "Noctweb namespace policy changed during admission.",
+                    code: .unavailable,
+                    retryable: true,
                     respondingTo: request
                 )
             } catch NamespaceAdmissionError.busy {
@@ -740,10 +747,11 @@ public final class RelayServer {
                 )
             }
         case .rotateNoctwebNamespace(let rotationRequest):
+            let rotationConfiguration = configuration
             guard rotationRequest.newIdentity.claim.federationMode
-                    == configuration.federation.mode,
+                    == rotationConfiguration.federation.mode,
                   rotationRequest.newIdentity.claim.federationName
-                    == configuration.federation.name,
+                    == rotationConfiguration.federation.name,
                   rotationRequest.newIdentity.claim.noctwebSuffix
                     != nil else {
                 return .error(
@@ -753,9 +761,29 @@ public final class RelayServer {
                 )
             }
             do {
+                guard try await isAdmittedNoctwebNamespaceClaim(
+                    rotationRequest.newIdentity,
+                    configuration: rotationConfiguration
+                ) else {
+                    return .error(
+                        "Noctweb namespace successor is not an authenticated federation member.",
+                        code: .authenticationRequired,
+                        respondingTo: request
+                    )
+                }
+                guard configuration == rotationConfiguration else {
+                    return .error(
+                        "Noctweb namespace policy changed during rotation admission.",
+                        code: .unavailable,
+                        retryable: true,
+                        respondingTo: request
+                    )
+                }
                 let record = try await noctwebNamespaceRuntime.rotate(
                     rotationRequest.rotation,
-                    to: rotationRequest.newIdentity
+                    to: rotationRequest.newIdentity,
+                    ifConfigurationUnchanged: rotationConfiguration,
+                    gate: configurationGate
                 )
                 await publishNoctwebNamespaceState()
                 await propagateNoctwebNamespaceMutation(request)
@@ -763,10 +791,31 @@ public final class RelayServer {
                     .noctwebNamespaceRecord(record),
                     respondingTo: request
                 )
-            } catch {
+            } catch is NoctwebNamespacePolicyChanged {
+                return .error(
+                    "Noctweb namespace policy changed during rotation admission.",
+                    code: .unavailable,
+                    retryable: true,
+                    respondingTo: request
+                )
+            } catch NamespaceAdmissionError.busy {
+                return .error(
+                    "Noctweb namespace membership verification is busy.",
+                    code: .rateLimited,
+                    retryable: true,
+                    respondingTo: request
+                )
+            } catch is NoctwebNamespaceLedgerErrorV1 {
                 return .error(
                     "Noctweb namespace rotation proof is invalid.",
                     code: .authenticationRequired,
+                    respondingTo: request
+                )
+            } catch {
+                return .error(
+                    "Noctweb namespace membership verification is unavailable.",
+                    code: .unavailable,
+                    retryable: true,
                     respondingTo: request
                 )
             }
@@ -1946,7 +1995,8 @@ public final class RelayServer {
     }
 
     private func makeCurrentSignedRelayIdentity(
-        at date: Date = Date()
+        at date: Date = Date(),
+        configuration requestedConfiguration: RelayConfiguration? = nil
     ) throws -> SignedRelayIdentityClaimV1 {
         let wallClockTimestamp = floor(date.timeIntervalSince1970)
         guard wallClockTimestamp.isFinite,
@@ -1954,7 +2004,7 @@ public final class RelayServer {
               wallClockTimestamp <= Double(RelayIdentityV1.maximumSequence) else {
             throw RelayNetworkError.invalidResponse
         }
-        let configuration = configuration
+        let configuration = requestedConfiguration ?? self.configuration
         let endpoints = advertisedIdentityEndpoints(configuration: configuration)
         guard !endpoints.isEmpty,
               let capabilities = configuration.makeInfo(now: date).protocolCapabilities else {
@@ -3415,6 +3465,49 @@ private enum NamespaceAdmissionError: Error {
     case busy
 }
 
+struct NoctwebNamespacePolicyChanged: Error {}
+
+final class NoctwebNamespacePolicyGate: @unchecked Sendable {
+    private let lock = NSLock()
+    private var value: RelayConfiguration
+
+    init(_ configuration: RelayConfiguration) {
+        value = configuration
+    }
+
+    func snapshot() -> RelayConfiguration {
+        lock.lock()
+        defer { lock.unlock() }
+        return value
+    }
+
+    func replace(with configuration: RelayConfiguration) {
+        lock.lock()
+        value = configuration
+        lock.unlock()
+    }
+
+    func mutate(_ body: (inout RelayConfiguration) -> Void) {
+        lock.lock()
+        defer { lock.unlock() }
+        body(&value)
+    }
+
+    /// Hold the policy lock only across a synchronous ledger mutation.
+    /// A public configuration update then linearizes before or after the write.
+    func withUnchanged<T>(
+        _ expected: RelayConfiguration,
+        perform body: () throws -> T
+    ) throws -> T {
+        lock.lock()
+        defer { lock.unlock() }
+        guard value == expected else {
+            throw NoctwebNamespacePolicyChanged()
+        }
+        return try body()
+    }
+}
+
 private struct CuratedMemberIdentityKey: Hashable {
     let signingPublicKey: Data
     let suffix: NoctwebRelaySuffixV1?
@@ -3440,6 +3533,17 @@ private actor NoctwebNamespaceRuntimeV1 {
         return record
     }
 
+    func claim(
+        _ identity: SignedRelayIdentityClaimV1,
+        ifConfigurationUnchanged configuration: RelayConfiguration,
+        gate: NoctwebNamespacePolicyGate,
+        now: Date = Date()
+    ) throws -> NoctwebNamespaceRecordV1 {
+        try gate.withUnchanged(configuration) {
+            try claim(identity, now: now)
+        }
+    }
+
     func rotate(
         _ rotation: RelayIdentityRotationV1,
         to newIdentity: SignedRelayIdentityClaimV1,
@@ -3451,6 +3555,18 @@ private actor NoctwebNamespaceRuntimeV1 {
             throw NoctwebNamespaceLedgerErrorV1.invalidRotation
         }
         return record
+    }
+
+    func rotate(
+        _ rotation: RelayIdentityRotationV1,
+        to newIdentity: SignedRelayIdentityClaimV1,
+        ifConfigurationUnchanged configuration: RelayConfiguration,
+        gate: NoctwebNamespacePolicyGate,
+        now: Date = Date()
+    ) throws -> NoctwebNamespaceRecordV1 {
+        try gate.withUnchanged(configuration) {
+            try rotate(rotation, to: newIdentity, now: now)
+        }
     }
 
     func release(

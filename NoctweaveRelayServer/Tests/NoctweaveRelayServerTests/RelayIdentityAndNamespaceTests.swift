@@ -1,4 +1,6 @@
 import Foundation
+import NIOCore
+import NIOEmbedded
 import XCTest
 @testable import NoctweaveRelayServer
 
@@ -13,6 +15,38 @@ final class RelayIdentityAndNamespaceTests: XCTestCase {
         useTLS: true,
         transport: .http
     )
+
+    func testNamespacePolicyGateSerializesLedgerMutationAndOperatorUpdate() {
+        let initial = RelayConfiguration(federation: federation)
+        var updated = initial
+        updated.federationAllowList = [endpoint]
+        let replacement = updated
+        let configurationStore = RelayConfigurationStore(initial)
+        let enteredMutation = DispatchSemaphore(value: 0)
+        let finishMutation = DispatchSemaphore(value: 0)
+        let replacementStarted = DispatchSemaphore(value: 0)
+        let replacementFinished = DispatchSemaphore(value: 0)
+
+        DispatchQueue.global().async {
+            _ = configurationStore.withUnchanged(initial) {
+                enteredMutation.signal()
+                _ = finishMutation.wait(timeout: .now() + .seconds(5))
+            }
+        }
+        XCTAssertEqual(enteredMutation.wait(timeout: .now() + .seconds(5)), .success)
+        DispatchQueue.global().async {
+            replacementStarted.signal()
+            configurationStore.replace(with: replacement)
+            replacementFinished.signal()
+        }
+        XCTAssertEqual(replacementStarted.wait(timeout: .now() + .seconds(5)), .success)
+        defer { finishMutation.signal() }
+        XCTAssertEqual(replacementFinished.wait(timeout: .now() + .milliseconds(50)), .timedOut)
+        finishMutation.signal()
+        XCTAssertEqual(replacementFinished.wait(timeout: .now() + .seconds(5)), .success)
+        XCTAssertEqual(configurationStore.snapshot(), replacement)
+        XCTAssertNil(configurationStore.withUnchanged(initial) { 1 })
+    }
 
     func testSignedRelayIdentityBindsCapabilitiesEndpointAndSuffix() throws {
         let key = try RelayIdentityKeyMaterialV1.generate()
@@ -175,18 +209,131 @@ final class RelayIdentityAndNamespaceTests: XCTestCase {
         XCTAssertEqual(record.ownerRelayID, owner.relayID)
     }
 
+    func testFailedFederationRosterSaveRetainsConservativeNamespaceOwnership() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "noctweb-registration-fault-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let database = root.appendingPathComponent("relay.sqlite")
+        let now = Date()
+        let owner = try RelayIdentityKeyMaterialV1.generate()
+        let suffix = NoctwebRelaySuffixV1(rawValue: ".rosterfault")!
+        let configuration = RelayConfiguration(
+            federation: federation,
+            advertisedEndpoint: endpoint,
+            noctwebRelaySuffix: suffix
+        )
+        let info = try configuration.makeInfo(now: now).authenticated(
+            by: owner,
+            sequence: 1,
+            advertisedEndpoints: [endpoint],
+            noctwebSuffix: suffix
+        )
+        let registration = FederationNodeRegistrationRequest(
+            endpoint: endpoint,
+            relayInfo: info,
+            ttlSeconds: 300
+        )
+
+        let store = RelayStore(fileURL: database, temporalBucketSeconds: 0)
+        try store.load()
+        store.failNextPersistenceForTesting()
+        XCTAssertThrowsError(try store.registerFederationNode(registration))
+        XCTAssertTrue(store.listFederationNodes(nil).isEmpty)
+
+        let reopened = RelayStore(fileURL: database, temporalBucketSeconds: 0)
+        try reopened.load()
+        XCTAssertTrue(reopened.listFederationNodes(nil).isEmpty)
+        XCTAssertEqual(
+            reopened.noctwebNamespaceRecord(for: suffix)?.ownerRelayID,
+            owner.relayID
+        )
+    }
+
+    func testManualNamespaceRotationRejectsUnlistedSuccessor() throws {
+        let now = Date()
+        let owner = try RelayIdentityKeyMaterialV1.generate()
+        let successor = try RelayIdentityKeyMaterialV1.generate()
+        let suffix = ".unlistedrotation"
+        let oldIdentity = try identity(owner, suffix: suffix, sequence: 1, now: now)
+        let unlistedEndpoint = RelayEndpoint(
+            host: "unlisted.example",
+            port: 443,
+            useTLS: true,
+            transport: .http
+        )
+        let newIdentity = try identity(
+            successor,
+            suffix: suffix,
+            sequence: 2,
+            now: now,
+            endpoint: unlistedEndpoint
+        )
+        let store = RelayStore(fileURL: nil, temporalBucketSeconds: 0)
+        // Ownership survives an operator removing a manual peer. A stale
+        // owner must not use rotation to assign it to an unlisted successor.
+        try store.claimNoctwebNamespace(oldIdentity, now: now)
+        let handler = RelayHandler(
+            store: store,
+            maxMessageBytes: nil,
+            maxLineBytes: nil,
+            localEndpoint: nil,
+            relayConfiguration: RelayConfiguration(
+                kind: .standard,
+                federation: federation
+            ),
+            relayIdentityRuntime: RelayIdentityRuntime(
+                keyMaterial: try RelayIdentityKeyMaterialV1.generate()
+            ),
+            forwardingRequestTimeoutSeconds: 2
+        )
+        let channel = EmbeddedChannel(handler: handler)
+        defer { _ = try? channel.finish() }
+        let rotation = try RelayIdentityRotationV1.signed(
+            from: owner,
+            to: successor,
+            sequence: 2,
+            issuedAt: now
+        )
+        let request = RelayRequest.rotateNoctwebNamespaceV1(
+            NoctwebNamespaceRotationRequestV1(
+                rotation: rotation,
+                newIdentity: newIdentity
+            )
+        )
+        let data = try RelayCodec.encoder().encode(request)
+        var input = channel.allocator.buffer(capacity: data.count)
+        input.writeBytes(data)
+        try channel.writeInbound(input)
+        var output: ByteBuffer = try XCTUnwrap(channel.readOutbound())
+        let encoded = try XCTUnwrap(output.readData(length: output.readableBytes))
+        XCTAssertEqual(encoded.last, 0x0a)
+        let response = try RelayCodec.decodeWire(
+            RelayResponse.self,
+            from: Data(encoded.dropLast())
+        )
+        XCTAssertEqual(response.error?.code, .authenticationRequired)
+        XCTAssertEqual(
+            store.noctwebNamespaceRecord(for: NoctwebRelaySuffixV1(rawValue: suffix)!)?.ownerRelayID,
+            owner.relayID
+        )
+    }
+
     private func identity(
         _ key: RelayIdentityKeyMaterialV1,
         suffix: String,
         sequence: Int,
         now: Date,
-        lifetime: TimeInterval = 24 * 60 * 60
+        lifetime: TimeInterval = 24 * 60 * 60,
+        endpoint: RelayEndpoint? = nil
     ) throws -> SignedRelayIdentityClaimV1 {
         try key.makeSignedClaim(
             sequence: sequence,
             relayKind: .standard,
             federation: federation,
-            advertisedEndpoints: [endpoint],
+            advertisedEndpoints: [endpoint ?? self.endpoint],
             noctwebSuffix: NoctwebRelaySuffixV1(rawValue: suffix),
             capabilities: RelayCapabilityManifestV2.advertised(
                 attachmentsEnabled: true,

@@ -766,6 +766,18 @@ final class RelayConfigurationStore: @unchecked Sendable {
     func replace(with configuration: RelayConfiguration) {
         lock.withLock { value = configuration }
     }
+
+    /// Serialize a policy-dependent ledger write with operator policy updates.
+    /// The body must be synchronous and must not start network callbacks.
+    func withUnchanged<T>(
+        _ expected: RelayConfiguration,
+        perform body: () throws -> T
+    ) rethrows -> T? {
+        try lock.withLock {
+            guard value == expected else { return nil }
+            return try body()
+        }
+    }
 }
 
 struct OperatorConfigurationPersistence {

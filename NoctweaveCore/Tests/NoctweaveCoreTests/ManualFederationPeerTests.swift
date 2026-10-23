@@ -2,6 +2,40 @@ import XCTest
 @testable import NoctweaveCore
 
 final class ManualFederationPeerTests: XCTestCase {
+    func testNamespacePolicyGateSerializesLedgerMutationAndPolicyReplacement() throws {
+        let initial = RelayConfiguration(kind: .standard)
+        var updated = initial
+        updated.federationAllowList = [RelayEndpoint(host: "peer.example", port: 9340)]
+        let replacement = updated
+        let gate = NoctwebNamespacePolicyGate(initial)
+        let enteredMutation = DispatchSemaphore(value: 0)
+        let finishMutation = DispatchSemaphore(value: 0)
+        let replacementStarted = DispatchSemaphore(value: 0)
+        let replacementFinished = DispatchSemaphore(value: 0)
+
+        DispatchQueue.global().async {
+            _ = try? gate.withUnchanged(initial) {
+                enteredMutation.signal()
+                _ = finishMutation.wait(timeout: .now() + .seconds(5))
+            }
+        }
+        XCTAssertEqual(enteredMutation.wait(timeout: .now() + .seconds(5)), .success)
+        DispatchQueue.global().async {
+            replacementStarted.signal()
+            gate.replace(with: replacement)
+            replacementFinished.signal()
+        }
+        XCTAssertEqual(replacementStarted.wait(timeout: .now() + .seconds(5)), .success)
+        defer { finishMutation.signal() }
+        XCTAssertEqual(replacementFinished.wait(timeout: .now() + .milliseconds(50)), .timedOut)
+        finishMutation.signal()
+        XCTAssertEqual(replacementFinished.wait(timeout: .now() + .seconds(5)), .success)
+        XCTAssertEqual(gate.snapshot(), replacement)
+        XCTAssertThrowsError(try gate.withUnchanged(initial) { 1 }) {
+            XCTAssertTrue($0 is NoctwebNamespacePolicyChanged)
+        }
+    }
+
     func testFederationOutboundEndpointRetainsOperatorTLSPin() {
         let pin = Data(repeating: 0x42, count: 32)
         let requested = RelayEndpoint(
@@ -251,6 +285,110 @@ final class ManualFederationPeerTests: XCTestCase {
         let records = await receiver.noctwebNamespaceRecords()
         XCTAssertEqual(records.first?.suffix, suffix)
         XCTAssertEqual(records.first?.ownerRelayID, identity.claim.relayID)
+    }
+
+    func testManualNamespaceRotationRejectsUnlistedSuccessor() async throws {
+        let federation = FederationDescriptor(
+            mode: .manual,
+            name: "manual-rotation-admission"
+        )
+        let suffix = NoctwebRelaySuffixV1(rawValue: ".rotatedpeer")!
+        let ownerKey = try RelayIdentityKeyMaterialV1.generate()
+        let owner = RelayServer(
+            store: RelayStore(storeURL: nil),
+            configuration: RelayConfiguration(
+                kind: .standard,
+                federation: federation,
+                noctwebRelaySuffix: suffix
+            ),
+            relayIdentity: ownerKey
+        )
+        let ownerEndpoint = try await startOnLoopback(
+            owner,
+            description: "rotation owner started"
+        )
+        defer { owner.stop() }
+        let receiver = RelayServer(
+            store: RelayStore(storeURL: nil),
+            configuration: RelayConfiguration(
+                kind: .standard,
+                federation: federation,
+                federationAllowList: [ownerEndpoint]
+            )
+        )
+        let receiverEndpoint = try await startOnLoopback(
+            receiver,
+            description: "rotation receiver started"
+        )
+        defer { receiver.stop() }
+        let client = RelayClient(endpoint: receiverEndpoint)
+        let ownerInfo = try await RelayClient(endpoint: ownerEndpoint).send(.info())
+        guard case .relayInfo(let info)? = ownerInfo.successBody,
+              let ownerIdentity = info.relayIdentity else {
+            return XCTFail("Expected the allowed owner's signed identity.")
+        }
+        let claim = try await client.send(.claimNoctwebNamespaceV1(
+            NoctwebNamespaceClaimRequestV1(identity: ownerIdentity)
+        ))
+        XCTAssertNotNil(claim.successBody)
+
+        let successorKey = try RelayIdentityKeyMaterialV1.generate()
+        let successor = try namespaceClaim(
+            key: successorKey,
+            federation: federation,
+            suffix: suffix,
+            endpoint: receiverEndpoint,
+            sequence: ownerIdentity.claim.sequence + 1
+        )
+        let rotation = try RelayIdentityRotationV1.signed(
+            from: ownerKey,
+            to: successorKey,
+            sequence: ownerIdentity.claim.sequence + 1,
+            issuedAt: Date()
+        )
+        let response = try await client.send(.rotateNoctwebNamespaceV1(
+            NoctwebNamespaceRotationRequestV1(
+                rotation: rotation,
+                newIdentity: successor
+            )
+        ))
+        XCTAssertEqual(response.error?.code, .authenticationRequired)
+        let records = await receiver.noctwebNamespaceRecords()
+        XCTAssertEqual(records.first?.ownerRelayID, ownerKey.relayID)
+
+        let successorRelay = RelayServer(
+            store: RelayStore(storeURL: nil),
+            configuration: RelayConfiguration(
+                kind: .standard,
+                federation: federation,
+                noctwebRelaySuffix: suffix
+            ),
+            relayIdentity: successorKey
+        )
+        let successorEndpoint = try await startOnLoopback(
+            successorRelay,
+            description: "admitted rotation successor started"
+        )
+        defer { successorRelay.stop() }
+        var admittedConfiguration = receiver.configuration
+        admittedConfiguration.federationAllowList = [ownerEndpoint, successorEndpoint]
+        receiver.configuration = admittedConfiguration
+        let admittedSuccessor = try namespaceClaim(
+            key: successorKey,
+            federation: federation,
+            suffix: suffix,
+            endpoint: successorEndpoint,
+            sequence: ownerIdentity.claim.sequence + 1
+        )
+        let admittedResponse = try await client.send(.rotateNoctwebNamespaceV1(
+            NoctwebNamespaceRotationRequestV1(
+                rotation: rotation,
+                newIdentity: admittedSuccessor
+            )
+        ))
+        XCTAssertNotNil(admittedResponse.successBody)
+        let rotatedRecords = await receiver.noctwebNamespaceRecords()
+        XCTAssertEqual(rotatedRecords.first?.ownerRelayID, successorKey.relayID)
     }
 
     func testRuntimeRefreshReannouncesNamespaceToLateManualPeer()
@@ -534,7 +672,8 @@ final class ManualFederationPeerTests: XCTestCase {
         key: RelayIdentityKeyMaterialV1,
         federation: FederationDescriptor,
         suffix: NoctwebRelaySuffixV1,
-        endpoint: RelayEndpoint
+        endpoint: RelayEndpoint,
+        sequence: Int? = nil
     ) throws -> SignedRelayIdentityClaimV1 {
         let configuration = RelayConfiguration(
             kind: .standard,
@@ -544,7 +683,7 @@ final class ManualFederationPeerTests: XCTestCase {
             configuration.makeInfo().protocolCapabilities
         )
         return try key.makeSignedClaim(
-            sequence: Int(Date().timeIntervalSince1970),
+            sequence: sequence ?? Int(Date().timeIntervalSince1970),
             relayKind: .standard,
             federation: federation,
             advertisedEndpoints: [endpoint],

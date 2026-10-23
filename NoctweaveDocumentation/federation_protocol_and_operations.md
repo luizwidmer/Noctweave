@@ -78,12 +78,17 @@ remains intact while it is offline. Open mode permits any valid self-signed
 first claim. Its explicit client signer policy controls snapshot acceptance,
 but does not prevent local suffix squatting or exhaustion of the bounded
 4,096-record ledger.
+The successor identity in a rotation must pass the receiving relay's current
+mode-specific admission check before the ledger changes ownership.
+For manual or curated federation, start the successor relay under its new key
+at an admitted endpoint before submitting the rotation; an offline successor
+will be rejected and can retry when reachable.
 
-These admission checks affect new claims. They cannot identify or safely
-reassign suffixes that were persisted before the checks. Operators upgrading
-an existing federation should review its namespace ledger and trusted client
-snapshots for unexpected owners before relying on them. Do not automatically
-clear or reassign historical ownership or tombstones.
+These admission checks affect new claims and rotations. They cannot identify
+or safely reassign suffixes that were persisted before the checks. Operators
+upgrading an existing federation should review its namespace ledger and trusted
+client snapshots for unexpected owners before relying on them. Do not
+automatically clear or reassign historical ownership or tombstones.
 
 ## Consensus snapshots
 
