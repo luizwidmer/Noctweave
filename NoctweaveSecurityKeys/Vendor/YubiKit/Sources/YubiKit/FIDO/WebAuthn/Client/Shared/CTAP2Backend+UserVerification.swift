@@ -13,17 +13,16 @@
 // limitations under the License.
 
 import Foundation
+import Logging
 
 // MARK: - User Verification
 
-extension WebAuthn.Client {
-
-    // MARK: - Retry Context
+extension WebAuthn {
 
     // Tracks UV/PIN state across retry attempts.
     // Handles: PUAT required (upgrade discouraged→required), UV blocked (fall back to PIN).
-    struct RetryContext {
-        var userVerification: WebAuthn.UserVerificationPreference
+    struct CTAP2RetryContext {
+        var userVerification: UserVerificationPreference
         var allowUV: Bool = true
 
         // Returns true if error is recoverable and state was updated for retry.
@@ -40,6 +39,9 @@ extension WebAuthn.Client {
             }
         }
     }
+}
+
+extension WebAuthn.CTAP2Backend {
 
     // MARK: - Token Acquisition
 
@@ -61,7 +63,7 @@ extension WebAuthn.Client {
         permissions: CTAP2.ClientPin.Permission,
         rpId: String,
         userVerification: WebAuthn.UserVerificationPreference,
-        isMakeCredential: Bool,
+        operation: WebAuthn.Authorization.Operation,
         allowUV: Bool = true,
         authorization: WebAuthn.Authorization,
         yieldProcessing: @Sendable () -> Void = {},
@@ -72,11 +74,10 @@ extension WebAuthn.Client {
             ) -> Void = { _, _ in }
     ) async throws(WebAuthn.ClientError) -> (token: CTAP2.Token?, uv: Bool?) {
 
-        let uvRequired = try isUserVerificationRequired(
+        let uvRequired = try operation.requiresUserVerification(
             info: info,
-            userVerification: userVerification,
-            permissions: permissions,
-            isMakeCredential: isMakeCredential
+            preference: userVerification,
+            permissions: permissions
         )
         guard uvRequired else {
             return (token: nil, uv: nil)
@@ -90,7 +91,7 @@ extension WebAuthn.Client {
         let initialUVRetries: Int
         if canTryUV {
             do throws(CTAP2.SessionError) {
-                initialUVRetries = try await backend.getUVRetries()
+                initialUVRetries = try await getUVRetries()
             } catch {
                 throw WebAuthn.ClientError(error)
             }
@@ -100,6 +101,7 @@ extension WebAuthn.Client {
 
         // External UV path: authenticator supports pinUVAuthToken.
         if initialUVRetries > 0, info.options.pinUVAuthToken == true {
+            logger.info("User Verification requested")
             let canFallback = authorization.uv != .required && hasPin
             let result = try await runExternalUV(
                 permissions: permissions,
@@ -115,6 +117,7 @@ extension WebAuthn.Client {
                 break
             }
         } else if initialUVRetries > 0, allowInternalUV {
+            logger.info("User Verification requested")
             // Internal UV (authenticator handles UV during MC/GA itself).
             return (token: nil, uv: true)
         } else if authorization.uv == .required {
@@ -134,6 +137,7 @@ extension WebAuthn.Client {
         }
 
         let pin: String
+        logger.info("PIN requested")
         switch await authorization.providePIN() {
         case .pin(let value):
             pin = value
@@ -142,7 +146,7 @@ extension WebAuthn.Client {
         }
 
         do throws(CTAP2.SessionError) {
-            let token = try await backend.getPinUVToken(
+            let token = try await getPinUVToken(
                 using: .pin(pin),
                 permissions: permissions,
                 rpId: rpId
@@ -154,7 +158,7 @@ extension WebAuthn.Client {
             }
             let retries: Int
             do {
-                retries = try await backend.getPinRetries().retries
+                retries = try await getPinRetries().retries
             } catch {
                 throw WebAuthn.ClientError(error)
             }
@@ -168,14 +172,14 @@ extension WebAuthn.Client {
 
 // MARK: - External UV Path
 
-extension WebAuthn.Client {
+private enum UVOutcome {
+    case token(CTAP2.Token)
+    case fallbackToPIN
+}
 
-    enum UVOutcome {
-        case token(CTAP2.Token)
-        case fallbackToPIN
-    }
+extension WebAuthn.CTAP2Backend {
 
-    fileprivate func runExternalUV(
+    private func runExternalUV(
         permissions: CTAP2.ClientPin.Permission,
         rpId: String,
         canFallback: Bool,
@@ -189,7 +193,7 @@ extension WebAuthn.Client {
         let signal = FallbackSignal()
 
         do throws(CTAP2.SessionError) {
-            let stream = try await backend.getPinUVTokenUpdates(
+            let stream = try await getPinUVTokenUpdates(
                 using: .uv,
                 permissions: permissions,
                 rpId: rpId
@@ -244,7 +248,7 @@ private actor FallbackSignal {
 
 // MARK: - UV Error Translation
 
-extension WebAuthn.Client {
+extension WebAuthn.CTAP2Backend {
 
     // Translates a `uvInvalid` CTAP error into the public retry-aware contract.
     // Used by both the external pinUVAuthToken path (in `acquireAuthToken`) and
@@ -258,69 +262,12 @@ extension WebAuthn.Client {
     func translateUVInvalid() async throws(WebAuthn.ClientError) -> WebAuthn.ClientError {
         let retries: Int
         do {
-            retries = try await backend.getUVRetries()
+            retries = try await getUVRetries()
         } catch {
             throw WebAuthn.ClientError(error)
         }
         return retries > 0
             ? .uvRejected(retriesRemaining: retries, source: .here())
             : .uvBlocked(source: .here())
-    }
-}
-
-// MARK: - Private
-
-extension WebAuthn.Client {
-
-    // Determines if UV is required based on preference, authenticator flags, and operation type.
-    // UV required if: explicit .required, .preferred with support, PIN set (even when discouraged),
-    // alwaysUV enabled, registration without makeCredUVNotRequired, or management permissions.
-    private func isUserVerificationRequired(
-        info: CTAP2.GetInfo.Response,
-        userVerification: WebAuthn.UserVerificationPreference,
-        permissions: CTAP2.ClientPin.Permission,
-        isMakeCredential: Bool
-    ) throws(WebAuthn.ClientError) -> Bool {
-        let options = info.options
-
-        // Supported = capability exists, Configured = capability is enabled/enrolled.
-        let uvSupported =
-            options.userVerification != nil
-            || options.clientPin != nil
-            || options.bioEnroll != nil
-
-        let uvConfigured =
-            options.userVerification == true
-            || options.clientPin == true
-            || options.bioEnroll == true
-
-        if userVerification == .required
-            || (userVerification == .preferred && uvSupported)
-            || (userVerification == .discouraged && options.clientPin == true)
-            || options.alwaysUV == true
-        {
-            guard uvConfigured else {
-                // PIN capability present but not configured: surface as
-                // `.pinNotSet` so callers can route into a PIN-setup flow
-                // instead of treating it as an unrecoverable failure.
-                if options.clientPin != nil {
-                    throw .pinNotSet(source: .here())
-                }
-                throw .notSupported("User verification not configured/supported", source: .here())
-            }
-            return true
-        }
-
-        if isMakeCredential && uvConfigured && options.makeCredUVNotRequired != true {
-            return true
-        }
-
-        // Management operations always require UV.
-        let additionalPerms = permissions.subtracting([.makeCredential, .getAssertion])
-        if uvConfigured && !additionalPerms.isEmpty {
-            return true
-        }
-
-        return false
     }
 }

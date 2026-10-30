@@ -76,13 +76,13 @@ See the [implementation and verification record](../NoctweaveDocumentation/secur
 
 | Read | For |
 | --- | --- |
-| [Upstream source and patch](Vendor/YubiKit/UPSTREAM.md) | Pinned SDK provenance and the read-only presence accessor |
+| [Upstream source and patch](Vendor/YubiKit/UPSTREAM.md) | Pinned SDK provenance, presence accessor, and payload-log redaction |
 | [Notices](NOTICE.md) | Dependency and attribution requirements |
 | [Messaging iOS local-flow migration](../NoctweaveDocumentation/security_key_messaging_ios_2026-09-22.md) | Compatibility, stored-key migration and current test evidence |
 | [Application verification record](../NoctweaveDocumentation/security_key_app_unlock_2026-09-08.md) | App behavior, tests, and hardware limits |
 
 ## License
 
-Local hardware-key authentication for Noctweave applications. This Swift package uses the official YubiKit Swift 1.3.0 library source, pinned to commit `f5a01653ec07530ffd300a02fc9818aa1298f13e`, with a documented read-only USB presence accessor. See [Vendor/YubiKit/UPSTREAM.md](Vendor/YubiKit/UPSTREAM.md), [NOTICE.md](NOTICE.md), and the retained Apache-2.0 license.
+Local hardware-key authentication for Noctweave applications. This Swift package uses the official YubiKit Swift 1.4.0 library source, pinned to commit `e19212f2efbca9af280e57542e669885de5acdc1`, with a documented read-only USB presence accessor and payload-log redaction. Swift Log is pinned to 1.15.1; Noctweave sets vendor logging to warning level before hardware-key operations. See [Vendor/YubiKit/UPSTREAM.md](Vendor/YubiKit/UPSTREAM.md), [NOTICE.md](NOTICE.md), and the retained Apache-2.0 license.
 
 The package and its separate desktop helper are AGPL-3.0-or-later. The protocol Core package has no dependency on this SDK. App unlock credentials are local access controls and never become persona, relationship, group, relay, or recovery authorities.

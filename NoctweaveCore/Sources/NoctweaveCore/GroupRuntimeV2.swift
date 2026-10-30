@@ -67,12 +67,16 @@ public struct PendingGroupApplicationPublicationV2: Codable, Equatable, Identifi
     public let id: UUID
     public let event: GroupConversationEventV2
     public let envelope: GroupApplicationEnvelopeV2
+    /// Exact Headless recipient routes selected before consuming a sender
+    /// counter. Nil marks caller-managed legacy or low-level publication.
+    public let transportRouteSets: [SignedGroupOpaqueRouteSetV2]?
     public let preparedAt: Date
 
     private enum CodingKeys: String, CodingKey, CaseIterable {
         case id
         case event
         case envelope
+        case transportRouteSets
         case preparedAt
     }
 
@@ -80,24 +84,41 @@ public struct PendingGroupApplicationPublicationV2: Codable, Equatable, Identifi
         id: UUID = UUID(),
         event: GroupConversationEventV2,
         envelope: GroupApplicationEnvelopeV2,
+        transportRouteSets: [SignedGroupOpaqueRouteSetV2]? = nil,
         preparedAt: Date
     ) {
         self.id = id
         self.event = event
         self.envelope = envelope
+        self.transportRouteSets = transportRouteSets?.sorted {
+            $0.ownerCredentialHandle.rawValue < $1.ownerCredentialHandle.rawValue
+        }
         self.preparedAt = preparedAt
     }
 
     public init(from decoder: Decoder) throws {
-        try requireExactGroupRuntimeKeys(decoder, CodingKeys.self)
+        let strict = try decoder.container(keyedBy: StrictGroupRuntimeCodingKey.self)
+        let actualKeys = Set(strict.allKeys.map(\.stringValue))
+        let currentKeys = Set(CodingKeys.allCases.map(\.stringValue))
+        guard actualKeys == currentKeys
+                || actualKeys == currentKeys.subtracting([CodingKeys.transportRouteSets.rawValue]) else {
+            throw DecodingError.dataCorrupted(
+                .init(codingPath: decoder.codingPath,
+                      debugDescription: "Invalid pending group publication fields")
+            )
+        }
         let values = try decoder.container(keyedBy: CodingKeys.self)
+        let routes = actualKeys == currentKeys
+            ? try values.decode([SignedGroupOpaqueRouteSetV2].self, forKey: .transportRouteSets)
+            : nil
         self.init(
             id: try values.decode(UUID.self, forKey: .id),
             event: try values.decode(GroupConversationEventV2.self, forKey: .event),
             envelope: try values.decode(GroupApplicationEnvelopeV2.self, forKey: .envelope),
+            transportRouteSets: routes,
             preparedAt: try values.decode(Date.self, forKey: .preparedAt)
         )
-        guard isStructurallyValid else {
+        guard transportRouteSets == routes, isStructurallyValid else {
             throw DecodingError.dataCorrupted(
                 .init(
                     codingPath: decoder.codingPath,
@@ -121,6 +142,7 @@ public struct PendingGroupApplicationPublicationV2: Codable, Equatable, Identifi
         try values.encode(id, forKey: .id)
         try values.encode(event, forKey: .event)
         try values.encode(envelope, forKey: .envelope)
+        try values.encodeIfPresent(transportRouteSets, forKey: .transportRouteSets)
         try values.encode(preparedAt, forKey: .preparedAt)
     }
 
@@ -129,13 +151,30 @@ public struct PendingGroupApplicationPublicationV2: Codable, Equatable, Identifi
             && envelope.isStructurallyValid
             && event.groupID == envelope.groupId
             && event.id == envelope.eventId
+            && (transportRouteSets == nil || transportRouteSetsAreValid)
             && preparedAt.timeIntervalSince1970.isFinite
             && preparedAt >= event.createdAt
+    }
+
+    private var transportRouteSetsAreValid: Bool {
+        guard let transportRouteSets else { return true }
+        return transportRouteSets.count
+                <= NoctweaveGroupArchitectureV2.maximumActiveExperimentalCredentials
+            && transportRouteSets == transportRouteSets.sorted(by: {
+                $0.ownerCredentialHandle.rawValue < $1.ownerCredentialHandle.rawValue
+            })
+            && Set(transportRouteSets.map(\.ownerCredentialHandle)).count
+                == transportRouteSets.count
+            && transportRouteSets.allSatisfy {
+                $0.groupID == event.groupID
+                    && $0.isStructurallyValid
+                    && !$0.usableRoutes(at: preparedAt).isEmpty
+            }
     }
 }
 
 /// Bounded replay receipt for an authenticated group application envelope.
-public enum GroupApplicationProcessingOutcomeV2: String, Codable, Equatable {
+public enum GroupApplicationProcessingOutcomeV2: String, Codable, Equatable, Sendable {
     case accepted
     case rejectedConflictingEnvelope
     case rejectedClientTransaction
@@ -262,6 +301,9 @@ public struct GroupEpochIntent: Codable, Equatable, Identifiable {
     /// It is the union of credentials active before and after the commit, so
     /// removed credentials can receive the transition that removes them.
     public let transportRecipientCredentials: [GroupMemberCredentialV2]
+    /// Exact authenticated routes selected before a Headless epoch commit.
+    /// Nil marks a legacy or low-level intent with caller-managed transport.
+    public let transportRouteSets: [SignedGroupOpaqueRouteSetV2]?
     public let providerCommitBytes: Data
     public let signedWelcomes: [SignedGroupWelcomeV2]
     public let deliveredCredentialHandles: [GroupScopedCredentialHandleV2]
@@ -281,6 +323,7 @@ public struct GroupEpochIntent: Codable, Equatable, Identifiable {
         case nextCryptoState
         case localCredentialAfterCommit
         case transportRecipientCredentials
+        case transportRouteSets
         case providerCommitBytes
         case signedWelcomes
         case deliveredCredentialHandles
@@ -301,6 +344,7 @@ public struct GroupEpochIntent: Codable, Equatable, Identifiable {
         nextCryptoState: GroupCryptoState,
         localCredentialAfterCommit: LocalGroupCredentialV2,
         transportRecipientCredentials: [GroupMemberCredentialV2]? = nil,
+        transportRouteSets: [SignedGroupOpaqueRouteSetV2]? = nil,
         providerCommitBytes: Data,
         signedWelcomes: [SignedGroupWelcomeV2],
         deliveredCredentialHandles: [GroupScopedCredentialHandleV2] = [],
@@ -325,6 +369,9 @@ public struct GroupEpochIntent: Codable, Equatable, Identifiable {
         ).sorted {
             $0.credentialHandle.rawValue < $1.credentialHandle.rawValue
         }
+        self.transportRouteSets = transportRouteSets?.sorted {
+            $0.ownerCredentialHandle.rawValue < $1.ownerCredentialHandle.rawValue
+        }
         self.providerCommitBytes = providerCommitBytes
         self.signedWelcomes = signedWelcomes.sorted {
             $0.destinationCredentialHandle.rawValue < $1.destinationCredentialHandle.rawValue
@@ -337,7 +384,16 @@ public struct GroupEpochIntent: Codable, Equatable, Identifiable {
     }
 
     public init(from decoder: Decoder) throws {
-        try requireExactGroupRuntimeKeys(decoder, CodingKeys.self)
+        let strict = try decoder.container(keyedBy: StrictGroupRuntimeCodingKey.self)
+        let actualKeys = Set(strict.allKeys.map(\.stringValue))
+        let currentKeys = Set(CodingKeys.allCases.map(\.stringValue))
+        // Accept only the exact old intent shape or the current one.
+        guard actualKeys == currentKeys
+                || actualKeys == currentKeys.subtracting([CodingKeys.transportRouteSets.rawValue]) else {
+            throw DecodingError.dataCorrupted(
+                .init(codingPath: decoder.codingPath, debugDescription: "Invalid group epoch intent fields")
+            )
+        }
         let values = try decoder.container(keyedBy: CodingKeys.self)
         let welcomes = try values.decode([SignedGroupWelcomeV2].self, forKey: .signedWelcomes)
         let delivered = try values.decode(
@@ -348,6 +404,12 @@ public struct GroupEpochIntent: Codable, Equatable, Identifiable {
             [GroupMemberCredentialV2].self,
             forKey: .transportRecipientCredentials
         )
+        let transportRoutes = actualKeys == currentKeys
+            ? try values.decode(
+                [SignedGroupOpaqueRouteSetV2].self,
+                forKey: .transportRouteSets
+            )
+            : nil
         self.init(
             id: try values.decode(UUID.self, forKey: .id),
             idempotencyKey: try values.decode(Data.self, forKey: .idempotencyKey),
@@ -364,6 +426,7 @@ public struct GroupEpochIntent: Codable, Equatable, Identifiable {
                 forKey: .localCredentialAfterCommit
             ),
             transportRecipientCredentials: transportRecipients,
+            transportRouteSets: transportRoutes,
             providerCommitBytes: try values.decode(Data.self, forKey: .providerCommitBytes),
             signedWelcomes: welcomes,
             deliveredCredentialHandles: delivered,
@@ -373,6 +436,7 @@ public struct GroupEpochIntent: Codable, Equatable, Identifiable {
         guard signedWelcomes == welcomes,
               deliveredCredentialHandles == delivered,
               transportRecipientCredentials == transportRecipients,
+              transportRouteSets == transportRoutes,
               isStructurallyValid else {
             throw DecodingError.dataCorrupted(
                 .init(codingPath: decoder.codingPath, debugDescription: "Invalid group epoch intent")
@@ -438,6 +502,7 @@ public struct GroupEpochIntent: Codable, Equatable, Identifiable {
               transportRecipientCredentials == nextSignedState.memberCredentials.filter({
                   $0.isActive(at: baseEpoch) || $0.isActive(at: nextEpoch)
               }),
+              transportRouteSetsAreValid,
               GroupEpochTransitionEnvelopeV2(
                   commit: signedCommit,
                   nextState: nextSignedState,
@@ -496,6 +561,31 @@ public struct GroupEpochIntent: Codable, Equatable, Identifiable {
         }
     }
 
+    private var transportRouteSetsAreValid: Bool {
+        guard let transportRouteSets else { return true }
+        let remote = transportRecipientCredentials.filter {
+            $0.memberHandle != localCredentialAfterCommit.memberHandle
+        }
+        guard transportRouteSets.count == remote.count,
+              transportRouteSets == transportRouteSets.sorted(by: {
+                  $0.ownerCredentialHandle.rawValue < $1.ownerCredentialHandle.rawValue
+              }),
+              Set(transportRouteSets.map(\.ownerCredentialHandle))
+                == Set(remote.map(\.credentialHandle)) else { return false }
+        let byHandle = Dictionary(uniqueKeysWithValues: remote.map {
+            ($0.credentialHandle, $0)
+        })
+        return transportRouteSets.allSatisfy { routeSet in
+            guard let credential = byHandle[routeSet.ownerCredentialHandle] else { return false }
+            return routeSet.groupID == groupId
+                && routeSet.ownerAdmissionDigest == credential.admissionDigest
+                && !routeSet.usableRoutes(at: createdAt).isEmpty
+                && (try? routeSet.verifyThrowing(
+                    ownerSigningPublicKey: credential.signingPublicKey
+                )) == true
+        }
+    }
+
     public var requiresRecoveryState: Bool {
         phase != .finalized
     }
@@ -530,6 +620,7 @@ public struct GroupEpochIntent: Codable, Equatable, Identifiable {
             nextCryptoState: nextCryptoState,
             localCredentialAfterCommit: localCredentialAfterCommit,
             transportRecipientCredentials: transportRecipientCredentials,
+            transportRouteSets: phase == .finalized ? nil : transportRouteSets,
             providerCommitBytes: providerCommitBytes,
             signedWelcomes: signedWelcomes,
             deliveredCredentialHandles: deliveredCredentialHandles ?? self.deliveredCredentialHandles,
@@ -602,7 +693,17 @@ public struct GroupEpochForkQuarantine: Codable, Equatable, Identifiable {
 }
 
 public struct GroupRuntimeRecord: Codable, Equatable, Identifiable {
-    public static let version = 5
+    public static let version = 6
+    public static let maximumProtectedApplicationEvents = 256
+    public static let maximumApplicationVerificationReceipts = 8_192
+    public static let applicationVerificationRecentWindow = 4_096
+    // No independent lifetime cap may reject a group while every historical
+    // chain head is still required by a retained receipt or protected binding.
+    // The 32 MiB aggregate limit remains the practical storage bound.
+    public static let maximumApplicationVerificationFrontiers =
+        maximumApplicationVerificationReceipts
+            + maximumProtectedApplicationEvents * 256
+            + NoctweaveGroupArchitectureV2.maximumActiveExperimentalCredentials
     public static let maximumQuarantinedForks = 64
     public static let maximumPeerEpochJournalEntries = 256
     public static let peerEpochRecentWindow = 192
@@ -626,6 +727,19 @@ public struct GroupRuntimeRecord: Codable, Equatable, Identifiable {
     public let deletionState: GroupRuntimeDeletionStateV2?
     public let originJoinAnchorID: UUID?
     public let events: [GroupConversationEventV2]
+    /// Application-selected, Core-verified events retained across normal
+    /// recent-history compaction. Retention grants no application authority.
+    public let protectedApplicationEventIDs: [UUID]
+    /// Previously Core-bound application pins deliberately retired by an
+    /// atomic series replacement while their events remain in local history.
+    public let retiredProtectedApplicationEventIDs: [UUID]
+    /// Epochs at or before this value predate authenticated local receipt
+    /// tracking. Migrated v5 history must never be used for v2 policy proofs.
+    public let applicationVerificationLegacyThroughEpoch: UInt64
+    public let applicationVerificationReceipts: [GroupApplicationVerificationReceiptV2]
+    public let applicationVerificationFrontiers: [GroupApplicationVerificationFrontierV2]
+    public let protectedApplicationVerificationBindings:
+        [GroupProtectedApplicationVerificationBindingV2]
     public let pendingApplicationPublications: [PendingGroupApplicationPublicationV2]
     public let processedApplicationEnvelopes: [ProcessedGroupApplicationEnvelopeV2]
     public let outboundTransportOperations: [GroupOpaqueRouteOutboundOperationV2]
@@ -647,11 +761,27 @@ public struct GroupRuntimeRecord: Codable, Equatable, Identifiable {
         case deletionState
         case originJoinAnchorID
         case events
+        case protectedApplicationEventIDs
+        case retiredProtectedApplicationEventIDs
+        case applicationVerificationLegacyThroughEpoch
+        case applicationVerificationReceipts
+        case applicationVerificationFrontiers
+        case protectedApplicationVerificationBindings
         case pendingApplicationPublications
         case processedApplicationEnvelopes
         case outboundTransportOperations
         case inboundTransport
         case peerRouteCache
+    }
+
+    /// Encodes the same durable fields as `GroupRuntimeRecord` without
+    /// re-entering its validation while measuring the record's byte budget.
+    private struct UncheckedDurableEncoding: Encodable {
+        let record: GroupRuntimeRecord
+
+        func encode(to encoder: Encoder) throws {
+            try record.encodeUnchecked(to: encoder)
+        }
     }
 
     public init(
@@ -669,6 +799,13 @@ public struct GroupRuntimeRecord: Codable, Equatable, Identifiable {
         deletionState: GroupRuntimeDeletionStateV2? = nil,
         originJoinAnchorID: UUID? = nil,
         events: [GroupConversationEventV2] = [],
+        protectedApplicationEventIDs: [UUID] = [],
+        retiredProtectedApplicationEventIDs: [UUID] = [],
+        applicationVerificationLegacyThroughEpoch: UInt64 = 0,
+        applicationVerificationReceipts: [GroupApplicationVerificationReceiptV2] = [],
+        applicationVerificationFrontiers: [GroupApplicationVerificationFrontierV2] = [],
+        protectedApplicationVerificationBindings:
+            [GroupProtectedApplicationVerificationBindingV2] = [],
         pendingApplicationPublications: [PendingGroupApplicationPublicationV2] = [],
         processedApplicationEnvelopes: [ProcessedGroupApplicationEnvelopeV2] = [],
         outboundTransportOperations: [GroupOpaqueRouteOutboundOperationV2] = [],
@@ -705,6 +842,22 @@ public struct GroupRuntimeRecord: Codable, Equatable, Identifiable {
         // by peer-authored timestamps: a sender could otherwise influence which
         // replay/transaction records survive bounded compaction.
         self.events = events
+        self.protectedApplicationEventIDs = protectedApplicationEventIDs.sorted {
+            $0.uuidString < $1.uuidString
+        }
+        self.retiredProtectedApplicationEventIDs = retiredProtectedApplicationEventIDs.sorted {
+            $0.uuidString < $1.uuidString
+        }
+        self.applicationVerificationLegacyThroughEpoch =
+            applicationVerificationLegacyThroughEpoch
+        self.applicationVerificationReceipts = applicationVerificationReceipts
+        self.applicationVerificationFrontiers = applicationVerificationFrontiers.sorted(
+            by: GroupApplicationVerificationFrontierV2.precedes
+        )
+        self.protectedApplicationVerificationBindings =
+            protectedApplicationVerificationBindings.sorted {
+                $0.eventID.uuidString < $1.eventID.uuidString
+            }
         self.pendingApplicationPublications = pendingApplicationPublications.sorted {
             if $0.preparedAt != $1.preparedAt { return $0.preparedAt < $1.preparedAt }
             return $0.id.uuidString < $1.id.uuidString
@@ -722,8 +875,52 @@ public struct GroupRuntimeRecord: Codable, Equatable, Identifiable {
     }
 
     public init(from decoder: Decoder) throws {
-        try requireExactGroupRuntimeKeys(decoder, CodingKeys.self)
+        let strict = try decoder.container(keyedBy: StrictGroupRuntimeCodingKey.self)
+        let keys = Set(strict.allKeys.map(\.stringValue))
+        let currentKeys = Set(CodingKeys.allCases.map(\.rawValue))
         let values = try decoder.container(keyedBy: CodingKeys.self)
+        let decodedVersion = try values.decode(Int.self, forKey: .formatVersion)
+        let isLegacy = decodedVersion == 5 && keys == currentKeys.subtracting([
+            CodingKeys.protectedApplicationEventIDs.rawValue,
+            CodingKeys.retiredProtectedApplicationEventIDs.rawValue,
+            CodingKeys.applicationVerificationLegacyThroughEpoch.rawValue,
+            CodingKeys.applicationVerificationReceipts.rawValue,
+            CodingKeys.applicationVerificationFrontiers.rawValue,
+            CodingKeys.protectedApplicationVerificationBindings.rawValue,
+        ])
+        let isPreRetirementV6 = decodedVersion == Self.version
+            && keys == currentKeys.subtracting([
+                CodingKeys.retiredProtectedApplicationEventIDs.rawValue
+            ])
+        guard isLegacy || isPreRetirementV6
+                || (decodedVersion == Self.version && keys == currentKeys) else {
+            throw DecodingError.dataCorrupted(
+                .init(codingPath: decoder.codingPath,
+                      debugDescription: "Group runtime fields must match the versioned schema exactly")
+            )
+        }
+        let decodedProtected = isLegacy ? []
+            : try values.decode([UUID].self, forKey: .protectedApplicationEventIDs)
+        let decodedRetired = isLegacy || isPreRetirementV6 ? []
+            : try values.decode([UUID].self, forKey: .retiredProtectedApplicationEventIDs)
+        let decodedLegacyThrough = isLegacy
+            ? try values.decode(SignedGroupStateV2.self, forKey: .signedState).epoch
+            : try values.decode(UInt64.self, forKey: .applicationVerificationLegacyThroughEpoch)
+        let decodedVerificationReceipts = isLegacy ? []
+            : try values.decode(
+                [GroupApplicationVerificationReceiptV2].self,
+                forKey: .applicationVerificationReceipts
+            )
+        let decodedVerificationFrontiers = isLegacy ? []
+            : try values.decode(
+                [GroupApplicationVerificationFrontierV2].self,
+                forKey: .applicationVerificationFrontiers
+            )
+        let decodedVerificationBindings = isLegacy ? []
+            : try values.decode(
+                [GroupProtectedApplicationVerificationBindingV2].self,
+                forKey: .protectedApplicationVerificationBindings
+            )
         let intents = try values.decode([GroupEpochIntent].self, forKey: .epochIntents)
         let forks = try values.decode(
             [GroupEpochForkQuarantine].self,
@@ -766,7 +963,7 @@ public struct GroupRuntimeRecord: Codable, Equatable, Identifiable {
             forKey: .peerRouteCache
         )
         self.init(
-            formatVersion: try values.decode(Int.self, forKey: .formatVersion),
+            formatVersion: Self.version,
             groupId: try values.decode(UUID.self, forKey: .groupId),
             localCredential: try values.decode(
                 LocalGroupCredentialV2.self,
@@ -789,6 +986,12 @@ public struct GroupRuntimeRecord: Codable, Equatable, Identifiable {
             ),
             originJoinAnchorID: try values.decodeIfPresent(UUID.self, forKey: .originJoinAnchorID),
             events: decodedEvents,
+            protectedApplicationEventIDs: decodedProtected,
+            retiredProtectedApplicationEventIDs: decodedRetired,
+            applicationVerificationLegacyThroughEpoch: decodedLegacyThrough,
+            applicationVerificationReceipts: decodedVerificationReceipts,
+            applicationVerificationFrontiers: decodedVerificationFrontiers,
+            protectedApplicationVerificationBindings: decodedVerificationBindings,
             pendingApplicationPublications: decodedPending,
             processedApplicationEnvelopes: decodedProcessed,
             outboundTransportOperations: decodedOutboundTransport,
@@ -801,6 +1004,12 @@ public struct GroupRuntimeRecord: Codable, Equatable, Identifiable {
               peerForkQuarantines == peerForks,
               pendingLocalCredentials == pendingCredentials,
               events == decodedEvents,
+              protectedApplicationEventIDs == decodedProtected,
+              retiredProtectedApplicationEventIDs == decodedRetired,
+              applicationVerificationLegacyThroughEpoch == decodedLegacyThrough,
+              applicationVerificationReceipts == decodedVerificationReceipts,
+              applicationVerificationFrontiers == decodedVerificationFrontiers,
+              protectedApplicationVerificationBindings == decodedVerificationBindings,
               pendingApplicationPublications == decodedPending,
               processedApplicationEnvelopes == decodedProcessed,
               outboundTransportOperations == decodedOutboundTransport,
@@ -823,6 +1032,10 @@ public struct GroupRuntimeRecord: Codable, Equatable, Identifiable {
                 )
             )
         }
+        try encodeUnchecked(to: encoder)
+    }
+
+    private func encodeUnchecked(to encoder: Encoder) throws {
         var values = encoder.container(keyedBy: CodingKeys.self)
         try values.encode(formatVersion, forKey: .formatVersion)
         try values.encode(groupId, forKey: .groupId)
@@ -838,6 +1051,21 @@ public struct GroupRuntimeRecord: Codable, Equatable, Identifiable {
         try values.encode(deletionState, forKey: .deletionState)
         try values.encode(originJoinAnchorID, forKey: .originJoinAnchorID)
         try values.encode(events, forKey: .events)
+        try values.encode(protectedApplicationEventIDs, forKey: .protectedApplicationEventIDs)
+        try values.encode(
+            retiredProtectedApplicationEventIDs,
+            forKey: .retiredProtectedApplicationEventIDs
+        )
+        try values.encode(
+            applicationVerificationLegacyThroughEpoch,
+            forKey: .applicationVerificationLegacyThroughEpoch
+        )
+        try values.encode(applicationVerificationReceipts, forKey: .applicationVerificationReceipts)
+        try values.encode(applicationVerificationFrontiers, forKey: .applicationVerificationFrontiers)
+        try values.encode(
+            protectedApplicationVerificationBindings,
+            forKey: .protectedApplicationVerificationBindings
+        )
         try values.encode(
             pendingApplicationPublications,
             forKey: .pendingApplicationPublications
@@ -857,6 +1085,34 @@ public struct GroupRuntimeRecord: Codable, Equatable, Identifiable {
     public var isStructurallyValidThrowing: Bool {
         get throws {
             try requireCryptographicRuntime()
+            // Bound work before indexing attacker-supplied durable arrays.
+            guard events.count <= NoctweaveArchitectureV2.maximumGroupEvents,
+                  pendingApplicationPublications.count
+                    <= NoctweaveArchitectureV2.maximumPendingGroupPublications,
+                  protectedApplicationEventIDs.count
+                    <= Self.maximumProtectedApplicationEvents,
+                  retiredProtectedApplicationEventIDs.count
+                    <= NoctweaveArchitectureV2.maximumGroupEvents,
+                  applicationVerificationReceipts.count
+                    <= Self.maximumApplicationVerificationReceipts,
+                  applicationVerificationFrontiers.count
+                    <= Self.maximumApplicationVerificationFrontiers else {
+                return false
+            }
+            var eventsByID: [UUID: GroupConversationEventV2] = [:]
+            eventsByID.reserveCapacity(events.count)
+            for event in events {
+                guard eventsByID.updateValue(event, forKey: event.id) == nil else {
+                    return false
+                }
+            }
+            let eventIDs = Set(eventsByID.keys)
+            let pendingEventIDs = Set(pendingApplicationPublications.map { $0.event.id })
+            let protectedIDs = Set(protectedApplicationEventIDs)
+            let retiredIDs = Set(retiredProtectedApplicationEventIDs)
+            let activeCredentialHandles = Set(
+                signedState.activeCredentials.map(\.credentialHandle)
+            )
             let pendingRouteAnnouncementIDs = Set(
                 inboundTransport.pendingRouteAnnouncementID.map { [$0] } ?? []
             )
@@ -909,8 +1165,6 @@ public struct GroupRuntimeRecord: Codable, Equatable, Identifiable {
                       && $0.credentialHandle != localCredential.credentialHandle
                       && structurallyValid
               }),
-              events.count <= NoctweaveArchitectureV2.maximumGroupEvents,
-              Set(events.map(\.id)).count == events.count,
               Set(events.map {
                   GroupAuthorTransactionKeyV2(
                       memberHandle: $0.authorMemberHandle,
@@ -918,16 +1172,96 @@ public struct GroupRuntimeRecord: Codable, Equatable, Identifiable {
                   )
               }).count == events.count,
               events.allSatisfy({ $0.groupID == groupId && $0.isStructurallyValid }),
-              pendingApplicationPublications.count
-                <= NoctweaveArchitectureV2.maximumPendingGroupPublications,
+              protectedApplicationEventIDs == protectedApplicationEventIDs.sorted(by: {
+                  $0.uuidString < $1.uuidString
+              }),
+              protectedIDs.count == protectedApplicationEventIDs.count,
+              protectedApplicationEventIDs.allSatisfy({ protectedID in
+                  eventsByID[protectedID]?.kind == .application
+                      && !pendingEventIDs.contains(protectedID)
+              }),
+              retiredProtectedApplicationEventIDs
+                == retiredProtectedApplicationEventIDs.sorted(by: {
+                    $0.uuidString < $1.uuidString
+                }),
+              retiredIDs.count == retiredProtectedApplicationEventIDs.count,
+              retiredIDs.isDisjoint(with: protectedIDs),
+              retiredProtectedApplicationEventIDs.allSatisfy({ retiredID in
+                  eventsByID[retiredID]?.kind == .application
+                      && !pendingEventIDs.contains(retiredID)
+              }),
+              applicationVerificationLegacyThroughEpoch <= signedState.epoch,
+              Set(applicationVerificationReceipts.map(\.eventID)).count
+                == applicationVerificationReceipts.count,
+              Set(applicationVerificationReceipts.map {
+                  "\($0.epoch)\u{0}\($0.credentialHandle.rawValue)\u{0}\($0.messageCounter)"
+              }).count == applicationVerificationReceipts.count,
+              applicationVerificationReceipts.allSatisfy({ receipt in
+                  receipt.isStructurallyValid
+                      && receipt.groupID == groupId
+                      && receipt.epoch > applicationVerificationLegacyThroughEpoch
+                      && (receipt.outcome != .accepted || (
+                          eventsByID[receipt.eventID].map { event in
+                              event.digest == receipt.eventDigest
+                                  && event.authorCredentialHandle == receipt.credentialHandle
+                          } ?? false
+                      ))
+              }),
+              applicationVerificationFrontiers == applicationVerificationFrontiers.sorted(
+                  by: GroupApplicationVerificationFrontierV2.precedes
+              ),
+              Set(applicationVerificationFrontiers.map {
+                  "\($0.epoch)\u{0}\($0.credentialHandle.rawValue)"
+              }).count == applicationVerificationFrontiers.count,
+              applicationVerificationFrontiers.allSatisfy({ frontier in
+                  frontier.isStructurallyValid
+                      && frontier.groupID == groupId
+                      && frontier.epoch > applicationVerificationLegacyThroughEpoch
+                      && frontier.epoch <= signedState.epoch
+                      && (frontier.epoch != signedState.epoch || (
+                          frontier.transcriptHash == signedState.confirmedTranscriptHash
+                              && activeCredentialHandles.contains(frontier.credentialHandle)
+                      ))
+              }),
+              protectedApplicationVerificationBindings.count
+                <= Self.maximumProtectedApplicationEvents,
+              protectedApplicationVerificationBindings
+                == protectedApplicationVerificationBindings.sorted(by: {
+                    $0.eventID.uuidString < $1.eventID.uuidString
+                }),
+              Set(protectedApplicationVerificationBindings.map(\.eventID)).count
+                == protectedApplicationVerificationBindings.count,
+              protectedApplicationVerificationBindings.allSatisfy({ binding in
+                  binding.isStructurallyValid
+                      && protectedIDs.contains(binding.eventID)
+                      && binding.frontiers.allSatisfy { $0.groupID == groupId }
+              }),
+              applicationVerificationSequenceIsValid,
               Set(pendingApplicationPublications.map(\.id)).count
                 == pendingApplicationPublications.count,
-              Set(pendingApplicationPublications.map { $0.event.id }).count
-                == pendingApplicationPublications.count,
-              pendingApplicationPublications.allSatisfy({
-                  $0.event.groupID == groupId
-                      && $0.isStructurallyValid
-                      && events.contains($0.event)
+              pendingEventIDs.count == pendingApplicationPublications.count,
+              pendingApplicationPublications.allSatisfy({ pending in
+                  guard pending.event.groupID == groupId,
+                        pending.isStructurallyValid,
+                        eventsByID[pending.event.id] == pending.event else { return false }
+                  guard let routes = pending.transportRouteSets else { return true }
+                  let remote = signedState.activeCredentials.filter {
+                      $0.memberHandle != localCredential.memberHandle
+                  }
+                  guard Set(routes.map(\.ownerCredentialHandle))
+                            == Set(remote.map(\.credentialHandle)) else { return false }
+                  let credentials = Dictionary(uniqueKeysWithValues: remote.map {
+                      ($0.credentialHandle, $0)
+                  })
+                  return routes.allSatisfy { route in
+                      guard let credential = credentials[route.ownerCredentialHandle] else {
+                          return false
+                      }
+                      return route.ownerAdmissionDigest == credential.admissionDigest
+                          && (try? route.verifyThrowing(
+                              ownerSigningPublicKey: credential.signingPublicKey
+                          )) == true
+                  }
               }),
               processedApplicationEnvelopes.count
                 <= NoctweaveArchitectureV2.maximumProcessedGroupEnvelopes,
@@ -1027,10 +1361,10 @@ public struct GroupRuntimeRecord: Codable, Equatable, Identifiable {
               }),
               Set(processedApplicationEnvelopes.lazy.filter {
                   $0.outcome == .accepted
-              }.map(\.eventID)).isSubset(of: Set(events.map(\.id))),
+              }.map(\.eventID)).isSubset(of: eventIDs),
               Set(processedApplicationEnvelopes.lazy.filter {
                   $0.outcome != .accepted
-              }.map(\.eventID)).isDisjoint(with: Set(events.map(\.id))),
+              }.map(\.eventID)).isDisjoint(with: eventIDs),
               try durableAggregateEncodedByteCountThrowing()
                 <= Self.maximumDurableEncodedBytes else {
                 return false
@@ -1083,6 +1417,7 @@ public struct GroupRuntimeRecord: Codable, Equatable, Identifiable {
                 signedState: signedState,
                 localCredential: localCredential
             )
+            guard try verificationFrontiersMatchCryptoState() else { return false }
         }
             return true
         }
@@ -1090,6 +1425,112 @@ public struct GroupRuntimeRecord: Codable, Equatable, Identifiable {
 
     public var isStructurallyValid: Bool {
         (try? isStructurallyValidThrowing) == true
+    }
+
+    private var applicationVerificationSequenceIsValid: Bool {
+        var lastByChain: [String: GroupApplicationVerificationReceiptV2] = [:]
+        for receipt in applicationVerificationReceipts {
+            let key = "\(receipt.epoch)\u{0}\(receipt.credentialHandle.rawValue)"
+            if let prior = lastByChain[key] {
+                guard prior.messageCounter < receipt.messageCounter else { return false }
+                guard prior.transcriptHash == receipt.transcriptHash else { return false }
+                if prior.messageCounter + 1 == receipt.messageCounter {
+                    guard prior.prefixDigest == receipt.previousPrefixDigest else { return false }
+                }
+            } else if receipt.messageCounter == 0 {
+                guard receipt.previousPrefixDigest
+                        == GroupApplicationVerificationFrontierV2.initialDigest(
+                            groupID: groupId, epoch: receipt.epoch,
+                            transcriptHash: receipt.transcriptHash,
+                            credentialHandle: receipt.credentialHandle
+                        ) else { return false }
+            }
+            lastByChain[key] = receipt
+        }
+        for frontier in applicationVerificationFrontiers {
+            let key = "\(frontier.epoch)\u{0}\(frontier.credentialHandle.rawValue)"
+            if let last = lastByChain[key] {
+                guard last.messageCounter < frontier.nextCounter,
+                      last.transcriptHash == frontier.transcriptHash else {
+                    return false
+                }
+                if last.messageCounter + 1 == frontier.nextCounter {
+                    guard last.prefixDigest == frontier.prefixDigest else { return false }
+                }
+                lastByChain.removeValue(forKey: key)
+            }
+        }
+        // An implicit zero-counter frontier is valid only for a sender chain
+        // with no receipt. Every retained receipt needs its durable chain head.
+        return lastByChain.isEmpty
+    }
+
+    private func verificationFrontiersMatchCryptoState() throws -> Bool {
+        guard signedState.epoch > applicationVerificationLegacyThroughEpoch else {
+            return !applicationVerificationFrontiers.contains { $0.epoch == signedState.epoch }
+        }
+        let positions = try NoctweavePQGroupExperimentalProviderV2()
+            .applicationCounterPositions(state: cryptoState, signedState: signedState)
+        var currentFrontiers: [GroupScopedCredentialHandleV2:
+            GroupApplicationVerificationFrontierV2] = [:]
+        for frontier in applicationVerificationFrontiers
+        where frontier.epoch == signedState.epoch {
+            currentFrontiers[frontier.credentialHandle] = frontier
+        }
+        return positions.allSatisfy { position in
+            (currentFrontiers[position.credential]?.nextCounter ?? 0)
+                == position.nextCounter
+        }
+    }
+
+    public func applicationVerificationReceipt(
+        for eventID: UUID
+    ) -> GroupApplicationVerificationReceiptV2? {
+        applicationVerificationReceipts.first { $0.eventID == eventID }
+    }
+
+    /// Returns a verified current or historical sender head. A fresh active
+    /// credential has the domain-separated zero-counter head. Migrated legacy
+    /// epochs deliberately return nil.
+    public func verificationFrontier(
+        epoch: UInt64,
+        credential: GroupScopedCredentialHandleV2
+    ) -> GroupApplicationVerificationFrontierV2? {
+        guard epoch > applicationVerificationLegacyThroughEpoch else { return nil }
+        if let frontier = applicationVerificationFrontiers.first(where: {
+            $0.epoch == epoch && $0.credentialHandle == credential
+        }) {
+            return frontier
+        }
+        guard epoch == signedState.epoch,
+              let member = signedState.activeCredentials.first(where: {
+                  $0.credentialHandle == credential
+              }) else { return nil }
+        return .initial(
+            groupID: groupId, epoch: epoch,
+            transcriptHash: signedState.confirmedTranscriptHash,
+            credentialHandle: member.credentialHandle
+        )
+    }
+
+    public func currentVerificationFrontiers()
+        -> [GroupApplicationVerificationFrontierV2]? {
+        guard signedState.epoch > applicationVerificationLegacyThroughEpoch else {
+            return nil
+        }
+        let frontiers = signedState.activeCredentials.compactMap {
+            verificationFrontier(epoch: signedState.epoch,
+                                 credential: $0.credentialHandle)
+        }
+        guard frontiers.count == signedState.activeCredentials.count else { return nil }
+        return frontiers.sorted(by: GroupApplicationVerificationFrontierV2.precedes)
+    }
+
+    /// Nil means no Core-verified binding exists. Empty bindings are invalid.
+    public func protectedVerificationFrontiers(
+        for eventID: UUID
+    ) -> [GroupApplicationVerificationFrontierV2]? {
+        protectedApplicationVerificationBindings.first { $0.eventID == eventID }?.frontiers
     }
 
     /// Retains every unfinished epoch mutation and the newest finalized
@@ -1125,6 +1566,33 @@ public struct GroupRuntimeRecord: Codable, Equatable, Identifiable {
         }
         let retainedEvents = compactedEvents()
         let retainedEventIDs = Set(retainedEvents.map(\.id))
+        let recentVerificationIDs = Set(
+            applicationVerificationReceipts.suffix(Self.applicationVerificationRecentWindow)
+                .map(\.eventID)
+        )
+        let retainedVerificationReceipts = applicationVerificationReceipts.filter { receipt in
+            if receipt.outcome == .accepted {
+                return retainedEventIDs.contains(receipt.eventID)
+            }
+            return recentVerificationIDs.contains(receipt.eventID)
+        }
+        func frontierKey(_ epoch: UInt64,
+                         _ credential: GroupScopedCredentialHandleV2) -> String {
+            "\(epoch)\u{0}\(credential.rawValue)"
+        }
+        let currentKeys = Set(signedState.activeCredentials.map {
+            frontierKey(signedState.epoch, $0.credentialHandle)
+        })
+        let receiptKeys = Set(retainedVerificationReceipts.map {
+            frontierKey($0.epoch, $0.credentialHandle)
+        })
+        let boundKeys = Set(protectedApplicationVerificationBindings.flatMap {
+            $0.frontiers.map { frontierKey($0.epoch, $0.credentialHandle) }
+        })
+        let relevantFrontierKeys = currentKeys.union(receiptKeys).union(boundKeys)
+        let retainedVerificationFrontiers = applicationVerificationFrontiers.filter {
+            relevantFrontierKeys.contains(frontierKey($0.epoch, $0.credentialHandle))
+        }
         let retainedProcessed = Array(
             processedApplicationEnvelopes.filter {
                 $0.outcome != .accepted || retainedEventIDs.contains($0.eventID)
@@ -1176,6 +1644,12 @@ public struct GroupRuntimeRecord: Codable, Equatable, Identifiable {
                 peerForkQuarantines.suffix(Self.maximumPeerForkQuarantines)
             ),
             events: retainedEvents,
+            retiredProtectedApplicationEventIDs:
+                retiredProtectedApplicationEventIDs.filter {
+                    retainedEventIDs.contains($0)
+                },
+            applicationVerificationReceipts: retainedVerificationReceipts,
+            applicationVerificationFrontiers: retainedVerificationFrontiers,
             processedApplicationEnvelopes: retainedProcessed,
             outboundTransportOperations: outboundTransportOperations.filter {
                 retainedTransportIDs.contains($0.id)
@@ -1207,6 +1681,12 @@ public struct GroupRuntimeRecord: Codable, Equatable, Identifiable {
         deletionState: GroupRuntimeDeletionStateV2? = nil,
         originJoinAnchorID: UUID? = nil,
         events: [GroupConversationEventV2]? = nil,
+        protectedApplicationEventIDs: [UUID]? = nil,
+        retiredProtectedApplicationEventIDs: [UUID]? = nil,
+        applicationVerificationReceipts: [GroupApplicationVerificationReceiptV2]? = nil,
+        applicationVerificationFrontiers: [GroupApplicationVerificationFrontierV2]? = nil,
+        protectedApplicationVerificationBindings:
+            [GroupProtectedApplicationVerificationBindingV2]? = nil,
         pendingApplicationPublications: [PendingGroupApplicationPublicationV2]? = nil,
         processedApplicationEnvelopes: [ProcessedGroupApplicationEnvelopeV2]? = nil,
         outboundTransportOperations: [GroupOpaqueRouteOutboundOperationV2]? = nil,
@@ -1228,6 +1708,18 @@ public struct GroupRuntimeRecord: Codable, Equatable, Identifiable {
             deletionState: deletionState ?? self.deletionState,
             originJoinAnchorID: originJoinAnchorID ?? self.originJoinAnchorID,
             events: events ?? self.events,
+            protectedApplicationEventIDs: protectedApplicationEventIDs
+                ?? self.protectedApplicationEventIDs,
+            retiredProtectedApplicationEventIDs: retiredProtectedApplicationEventIDs
+                ?? self.retiredProtectedApplicationEventIDs,
+            applicationVerificationLegacyThroughEpoch:
+                applicationVerificationLegacyThroughEpoch,
+            applicationVerificationReceipts: applicationVerificationReceipts
+                ?? self.applicationVerificationReceipts,
+            applicationVerificationFrontiers: applicationVerificationFrontiers
+                ?? self.applicationVerificationFrontiers,
+            protectedApplicationVerificationBindings: protectedApplicationVerificationBindings
+                ?? self.protectedApplicationVerificationBindings,
             pendingApplicationPublications: pendingApplicationPublications
                 ?? self.pendingApplicationPublications,
             processedApplicationEnvelopes: processedApplicationEnvelopes
@@ -1244,6 +1736,7 @@ public struct GroupRuntimeRecord: Codable, Equatable, Identifiable {
             return events
         }
         let protected = Set(pendingApplicationPublications.map { $0.event.id })
+            .union(protectedApplicationEventIDs)
         let recentIDs = Set(
             events.suffix(NoctweaveArchitectureV2.groupEventRecentWindow).map(\.id)
         )
@@ -1251,35 +1744,14 @@ public struct GroupRuntimeRecord: Codable, Equatable, Identifiable {
         return events.filter { retainedIDs.contains($0.id) }
     }
 
-    /// Conservative sum of canonical field encodings plus fixed record
-    /// framing. Array encodings include every duplicated artifact, so nominal
-    /// entry-count bounds cannot bypass the durable byte budget.
+    /// Exact canonical size of every durable field, including record framing.
+    /// The wrapper avoids recursively validating this record while preserving
+    /// canonical encoding checks and the 32 MiB outer-envelope headroom.
     private func durableAggregateEncodedByteCountThrowing() throws -> Int {
-        var total = 4_096
-        func add<T: Encodable>(_ value: T) throws {
-            let bytes = try NoctweaveCoder.encode(value, sortedKeys: true).count
-            let (next, overflow) = total.addingReportingOverflow(bytes)
-            guard !overflow else { throw GroupRuntimeError.capacityReached }
-            total = next
-        }
-        try add(localCredential)
-        try add(signedState)
-        try add(cryptoState)
-        try add(epochIntents)
-        try add(quarantinedForks)
-        try add(peerEpochJournal)
-        try add(peerForkQuarantines)
-        try add(pendingLocalCredentials)
-        try add(localRemoval)
-        try add(deletionState)
-        try add(originJoinAnchorID)
-        try add(events)
-        try add(pendingApplicationPublications)
-        try add(processedApplicationEnvelopes)
-        try add(outboundTransportOperations)
-        try add(inboundTransport)
-        try add(peerRouteCache)
-        return total
+        try NoctweaveCoder.encode(
+            UncheckedDurableEncoding(record: self),
+            sortedKeys: true
+        ).count
     }
 
     fileprivate func requireCryptographicRuntime() throws {
@@ -1449,6 +1921,199 @@ public actor NoctweavePQGroupRuntimeV2 {
 
     public func snapshot() -> GroupRuntimeRecord { record }
 
+    /// Retains one already-accepted application event while replacing a prior
+    /// retained event in the same content family. Core does not interpret the
+    /// event as a policy checkpoint or grant it any authorization semantics.
+    /// Pending local publications cannot be protected until fanout completes.
+    /// A deliberately retired ID cannot be re-protected by later replay.
+    public func replaceProtectedApplicationEvent(
+        previousEventID: UUID?,
+        with newEventID: UUID,
+        verificationFrontiers: [GroupApplicationVerificationFrontierV2] = []
+    ) async throws {
+        try requireActiveRuntime()
+        guard let next = record.events.first(where: {
+            $0.id == newEventID && $0.kind == .application
+        }), !record.pendingApplicationPublications.contains(where: {
+            $0.event.id == newEventID
+        }), !record.retiredProtectedApplicationEventIDs.contains(newEventID) else {
+            throw GroupRuntimeError.invalidRecord
+        }
+        var protected = Set(record.protectedApplicationEventIDs)
+        if let previousEventID {
+            guard protected.contains(previousEventID),
+                  let previous = record.events.first(where: {
+                      $0.id == previousEventID && $0.kind == .application
+                  }), previous.content.type == next.content.type else {
+                throw GroupRuntimeError.invalidRecord
+            }
+            protected.remove(previousEventID)
+        }
+        protected.insert(newEventID)
+        guard protected.count <= GroupRuntimeRecord.maximumProtectedApplicationEvents else {
+            throw GroupRuntimeError.capacityReached
+        }
+        let ordered = protected.sorted { $0.uuidString < $1.uuidString }
+        var bindings = record.protectedApplicationVerificationBindings.filter {
+            $0.eventID != previousEventID && $0.eventID != newEventID
+        }
+        if !verificationFrontiers.isEmpty {
+            let binding = GroupProtectedApplicationVerificationBindingV2(
+                eventID: newEventID, frontiers: verificationFrontiers
+            )
+            guard binding.isStructurallyValid,
+                  let checkpointReceipt = record.applicationVerificationReceipt(
+                      for: newEventID
+                  ), checkpointReceipt.outcome == .accepted,
+                  checkpointReceipt.eventDigest == next.digest,
+                  binding.frontiers.contains(where: {
+                      $0.epoch == checkpointReceipt.epoch
+                          && $0.credentialHandle == checkpointReceipt.credentialHandle
+                          && $0.nextCounter == checkpointReceipt.messageCounter
+                          && $0.prefixDigest == checkpointReceipt.previousPrefixDigest
+                  }),
+                  binding.frontiers.allSatisfy({ verifiedFrontierMatches($0) }) else {
+                throw GroupRuntimeError.invalidRecord
+            }
+            bindings.append(binding)
+        } else if let existing = record.protectedApplicationVerificationBindings.first(where: {
+            $0.eventID == newEventID
+        }) {
+            bindings.append(existing)
+        }
+        if ordered == record.protectedApplicationEventIDs
+            && bindings == record.protectedApplicationVerificationBindings { return }
+        try await persist(record.replacing(
+            protectedApplicationEventIDs: ordered,
+            protectedApplicationVerificationBindings: bindings
+        ))
+    }
+
+    /// Removes an application-selected retention pin and its locally verified
+    /// frontier binding. Callers must determine whether historical replay still
+    /// needs the event before retiring it.
+    public func removeProtectedApplicationEvent(eventID: UUID) async throws {
+        try requireActiveRuntime()
+        guard record.protectedApplicationEventIDs.contains(eventID) else {
+            throw GroupRuntimeError.invalidRecord
+        }
+        try await persist(record.replacing(
+            protectedApplicationEventIDs: record.protectedApplicationEventIDs.filter {
+                $0 != eventID
+            },
+            protectedApplicationVerificationBindings:
+                record.protectedApplicationVerificationBindings.filter {
+                    $0.eventID != eventID
+                }
+        ))
+    }
+
+    /// Atomically binds a complete application-selected successor series and
+    /// retires previously bound pins. Core verifies receipt/frontier evidence,
+    /// but the caller must verify owner signatures, series completeness, and
+    /// that no retained application history still needs the retired policy.
+    public func replaceProtectedApplicationEventSeries(
+        retiring oldEventIDs: [UUID],
+        with newBindings: [GroupProtectedApplicationVerificationBindingV2]
+    ) async throws {
+        try requireActiveRuntime()
+        let oldIDs = Set(oldEventIDs)
+        let newIDs = Set(newBindings.map(\.eventID))
+        guard !oldIDs.isEmpty, oldIDs.count == oldEventIDs.count,
+              !newIDs.isEmpty, newIDs.count == newBindings.count,
+              oldIDs.isSubset(of: Set(record.protectedApplicationEventIDs)),
+              oldIDs.allSatisfy({ id in
+                  record.protectedApplicationVerificationBindings.contains {
+                      $0.eventID == id
+                  }
+              }),
+              oldIDs.isDisjoint(with: newIDs),
+              newIDs.isDisjoint(with: Set(record.retiredProtectedApplicationEventIDs)) else {
+            throw GroupRuntimeError.invalidRecord
+        }
+        let eventPositions = Dictionary(uniqueKeysWithValues: record.events.enumerated().map {
+            ($0.element.id, $0.offset)
+        })
+        guard let latestOld = oldIDs.compactMap({ eventPositions[$0] }).max(),
+              let earliestNew = newIDs.compactMap({ eventPositions[$0] }).min(),
+              earliestNew > latestOld,
+              newBindings.allSatisfy({ verifiedAcceptedApplicationBinding($0) }) else {
+            throw GroupRuntimeError.invalidRecord
+        }
+        let protected = Set(record.protectedApplicationEventIDs)
+            .subtracting(oldIDs).union(newIDs)
+        guard protected.count <= GroupRuntimeRecord.maximumProtectedApplicationEvents else {
+            throw GroupRuntimeError.capacityReached
+        }
+        let bindings = record.protectedApplicationVerificationBindings.filter {
+            !oldIDs.contains($0.eventID) && !newIDs.contains($0.eventID)
+        } + newBindings
+        let retired = Set(record.retiredProtectedApplicationEventIDs)
+            .union(oldIDs)
+        try await persist(record.replacing(
+            protectedApplicationEventIDs: protected.sorted {
+                $0.uuidString < $1.uuidString
+            },
+            retiredProtectedApplicationEventIDs: retired.sorted {
+                $0.uuidString < $1.uuidString
+            },
+            protectedApplicationVerificationBindings: bindings
+        ))
+    }
+
+    private func verifiedAcceptedApplicationBinding(
+        _ binding: GroupProtectedApplicationVerificationBindingV2
+    ) -> Bool {
+        guard binding.isStructurallyValid,
+              let event = record.events.first(where: {
+                  $0.id == binding.eventID && $0.kind == .application
+              }),
+              !record.pendingApplicationPublications.contains(where: {
+                  $0.event.id == binding.eventID
+              }),
+              let receipt = record.applicationVerificationReceipt(for: binding.eventID),
+              receipt.outcome == .accepted,
+              receipt.eventDigest == event.digest,
+              binding.frontiers.contains(where: {
+                  $0.epoch == receipt.epoch
+                      && $0.credentialHandle == receipt.credentialHandle
+                      && $0.nextCounter == receipt.messageCounter
+                      && $0.prefixDigest == receipt.previousPrefixDigest
+              }),
+              binding.frontiers.allSatisfy({ verifiedFrontierMatches($0) }) else {
+            return false
+        }
+        return true
+    }
+
+    private func verifiedFrontierMatches(
+        _ expected: GroupApplicationVerificationFrontierV2
+    ) -> Bool {
+        guard expected.groupID == record.groupId,
+              expected.isStructurallyValid else { return false }
+        if let current = record.verificationFrontier(
+            epoch: expected.epoch, credential: expected.credentialHandle
+        ), current == expected { return true }
+        if record.applicationVerificationReceipts.contains(where: { receipt in
+            receipt.epoch == expected.epoch
+                && receipt.transcriptHash == expected.transcriptHash
+                && receipt.credentialHandle == expected.credentialHandle
+                && receipt.messageCounter == expected.nextCounter
+                && receipt.previousPrefixDigest == expected.prefixDigest
+        }) { return true }
+        if expected.nextCounter > 0,
+           record.applicationVerificationReceipts.contains(where: { receipt in
+               receipt.epoch == expected.epoch
+                   && receipt.transcriptHash == expected.transcriptHash
+                   && receipt.credentialHandle == expected.credentialHandle
+                   && receipt.messageCounter + 1 == expected.nextCounter
+                   && receipt.prefixDigest == expected.prefixDigest
+           }) { return true }
+        return record.protectedApplicationVerificationBindings.contains { binding in
+            binding.frontiers.contains(expected)
+        }
+    }
+
     public func pendingApplicationPublications() -> [PendingGroupApplicationPublicationV2] {
         record.pendingApplicationPublications
     }
@@ -1611,6 +2276,7 @@ public actor NoctweavePQGroupRuntimeV2 {
     /// envelope in a durable outbox before returning it to a transport adapter.
     public func prepareApplicationEvent(
         _ event: GroupConversationEventV2,
+        transportRouteSets: [SignedGroupOpaqueRouteSetV2]? = nil,
         at date: Date = Date()
     ) async throws -> GroupApplicationEnvelopeV2 {
         try requireActiveRuntime()
@@ -1636,6 +2302,13 @@ public actor NoctweavePQGroupRuntimeV2 {
             $0.event.id == event.id
         }) {
             guard existing.event == event else {
+                throw GroupRuntimeError.conflictingApplicationEnvelope
+            }
+            if let transportRouteSets,
+               let bound = existing.transportRouteSets,
+               bound != transportRouteSets.sorted(by: {
+                   $0.ownerCredentialHandle.rawValue < $1.ownerCredentialHandle.rawValue
+               }) {
                 throw GroupRuntimeError.conflictingApplicationEnvelope
             }
             return existing.envelope
@@ -1670,14 +2343,24 @@ public actor NoctweavePQGroupRuntimeV2 {
         let pending = PendingGroupApplicationPublicationV2(
             event: event,
             envelope: sealed.envelope,
+            transportRouteSets: transportRouteSets,
             preparedAt: date
         )
         guard pending.isStructurallyValid else {
             throw GroupRuntimeError.invalidRecord
         }
+        let envelopeDigest = Data(SHA256.hash(
+            data: try NoctweaveCoder.encode(sealed.envelope, sortedKeys: true)
+        ))
+        let verification = try advancedApplicationVerification(
+            envelope: sealed.envelope, envelopeDigest: envelopeDigest,
+            eventDigest: event.digest, outcome: .accepted
+        )
         try await persist(record.replacing(
             cryptoState: sealed.state,
             events: record.events + [event],
+            applicationVerificationReceipts: verification.receipts,
+            applicationVerificationFrontiers: verification.frontiers,
             pendingApplicationPublications: record.pendingApplicationPublications + [pending]
         ))
         return sealed.envelope
@@ -1798,9 +2481,15 @@ public actor NoctweavePQGroupRuntimeV2 {
             outcome: .accepted,
             processedAt: date
         )
+        let verification = try advancedApplicationVerification(
+            envelope: envelope, envelopeDigest: envelopeDigest,
+            eventDigest: event.digest, outcome: .accepted
+        )
         try await persist(record.replacing(
             cryptoState: opened.state,
             events: record.events + [event],
+            applicationVerificationReceipts: verification.receipts,
+            applicationVerificationFrontiers: verification.frontiers,
             processedApplicationEnvelopes: record.processedApplicationEnvelopes
                 + [processed]
         ))
@@ -1816,6 +2505,7 @@ public actor NoctweavePQGroupRuntimeV2 {
         proposedPermissions: GroupPermissionPolicy,
         proposedMetadataDigest: Data?,
         idempotencyKey: Data,
+        transportRouteSets: [SignedGroupOpaqueRouteSetV2]? = nil,
         createdAt: Date = Date()
     ) async throws -> GroupEpochPublication {
         try requireActiveRuntime()
@@ -1942,6 +2632,7 @@ public actor NoctweavePQGroupRuntimeV2 {
             nextCryptoState: nextCryptoState,
             localCredentialAfterCommit: replacementLocalCredential ?? record.localCredential,
             transportRecipientCredentials: transportRecipients,
+            transportRouteSets: transportRouteSets,
             providerCommitBytes: prepared.commitBytes,
             signedWelcomes: signedWelcomes,
             createdAt: createdAt,
@@ -2554,10 +3245,73 @@ public actor NoctweavePQGroupRuntimeV2 {
             outcome: outcome,
             processedAt: date
         )
+        let verification = try advancedApplicationVerification(
+            envelope: envelope, envelopeDigest: envelopeDigest,
+            eventDigest: nil, outcome: outcome
+        )
         try await persist(record.replacing(
             cryptoState: cryptoState,
+            applicationVerificationReceipts: verification.receipts,
+            applicationVerificationFrontiers: verification.frontiers,
             processedApplicationEnvelopes: record.processedApplicationEnvelopes
                 + [processed]
         ))
+    }
+
+    private func advancedApplicationVerification(
+        envelope: GroupApplicationEnvelopeV2,
+        envelopeDigest: Data,
+        eventDigest: Data?,
+        outcome: GroupApplicationProcessingOutcomeV2
+    ) throws -> (
+        receipts: [GroupApplicationVerificationReceiptV2],
+        frontiers: [GroupApplicationVerificationFrontierV2]
+    ) {
+        // Legacy v5 epochs have already consumed counters without a durable
+        // prefix transcript. They remain usable for Core messaging, but cannot
+        // provide v2 application-policy proof until a fresh epoch starts.
+        guard envelope.epoch > record.applicationVerificationLegacyThroughEpoch else {
+            return (record.applicationVerificationReceipts,
+                    record.applicationVerificationFrontiers)
+        }
+        guard let previous = record.verificationFrontier(
+            epoch: envelope.epoch, credential: envelope.senderCredentialHandle
+        ), previous.nextCounter == envelope.messageCounter,
+        previous.transcriptHash == envelope.transcriptHash,
+        envelopeDigest.count == SHA256.byteCount else {
+            throw GroupRuntimeError.invalidRecord
+        }
+        let digest = GroupApplicationVerificationReceiptV2.nextDigest(
+            previous: previous.prefixDigest,
+            eventID: envelope.eventId, groupID: envelope.groupId,
+            epoch: envelope.epoch, transcriptHash: envelope.transcriptHash,
+            credentialHandle: envelope.senderCredentialHandle,
+            messageCounter: envelope.messageCounter,
+            envelopeDigest: envelopeDigest,
+            eventDigest: eventDigest,
+            outcome: outcome
+        )
+        let receipt = GroupApplicationVerificationReceiptV2(
+            eventID: envelope.eventId, groupID: envelope.groupId,
+            eventDigest: eventDigest,
+            epoch: envelope.epoch, transcriptHash: envelope.transcriptHash,
+            credentialHandle: envelope.senderCredentialHandle,
+            messageCounter: envelope.messageCounter,
+            envelopeDigest: envelopeDigest,
+            previousPrefixDigest: previous.prefixDigest,
+            prefixDigest: digest, outcome: outcome
+        )
+        guard receipt.isStructurallyValid else { throw GroupRuntimeError.invalidRecord }
+        let next = GroupApplicationVerificationFrontierV2(
+            groupID: envelope.groupId, epoch: envelope.epoch,
+            transcriptHash: envelope.transcriptHash,
+            credentialHandle: envelope.senderCredentialHandle,
+            nextCounter: envelope.messageCounter + 1,
+            prefixDigest: digest
+        )
+        let frontiers = record.applicationVerificationFrontiers.filter {
+            !($0.epoch == next.epoch && $0.credentialHandle == next.credentialHandle)
+        } + [next]
+        return (record.applicationVerificationReceipts + [receipt], frontiers)
     }
 }

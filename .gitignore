@@ -17,6 +17,8 @@ xcuserdata/
 .build/
 Packages/
 Package.resolved
+!NoctweaveRelayServer/Package.resolved
+!NoctweaveSecurityKeys/Package.resolved
 .clang-module-cache/
 .swiftpm-module-cache/
 __pycache__/

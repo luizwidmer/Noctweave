@@ -23,22 +23,25 @@ def read_text(path):
 
 
 def package_resolved_components():
-    path = ROOT / "NoctweaveRelayServer" / "Package.resolved"
-    payload = json.loads(read_text(path))
     components = []
-    for pin in payload.get("pins", []):
-        state = pin.get("state", {})
-        components.append(
-            {
-                "type": "swift-package",
-                "name": pin.get("identity"),
-                "version": state.get("version"),
-                "revision": state.get("revision"),
-                "source": pin.get("location"),
-                "pinFile": str(path.relative_to(ROOT)),
-            }
-        )
-    return sorted(components, key=lambda item: item["name"] or "")
+    for path in (
+        ROOT / "NoctweaveRelayServer" / "Package.resolved",
+        ROOT / "NoctweaveSecurityKeys" / "Package.resolved",
+    ):
+        payload = json.loads(read_text(path))
+        for pin in payload.get("pins", []):
+            state = pin.get("state", {})
+            components.append(
+                {
+                    "type": "swift-package",
+                    "name": pin.get("identity"),
+                    "version": state.get("version"),
+                    "revision": state.get("revision"),
+                    "source": pin.get("location"),
+                    "pinFile": str(path.relative_to(ROOT)),
+                }
+            )
+    return sorted(components, key=lambda item: (item["name"] or "", item["pinFile"]))
 
 
 def docker_components():
@@ -91,6 +94,49 @@ def docker_components():
                     "pinFile": str(path.relative_to(ROOT)),
                 }
             )
+    return components
+
+
+def caddy_go_components():
+    dockerfile = ROOT / "NoctweaveRelayServer" / "Dockerfile.caddy-l4"
+    patch = ROOT / "NoctweaveRelayServer" / "CaddyPatches" / "go-jose-v3-rsa-limit.patch"
+    text = read_text(dockerfile)
+    pins = {}
+
+    for module, version in re.findall(
+        r"^\s*--with\s+([^\s@\\]+)@(v[0-9][^\s\\]+)", text, flags=re.MULTILINE
+    ):
+        pins[module] = version
+    for module, _replacement, version in re.findall(
+        r"^\s*--replace\s+([^=\s]+)=([^\s@\\]+)@(v[0-9][^\s\\]+)",
+        text, flags=re.MULTILINE,
+    ):
+        pins[module] = version
+
+    caddy = re.search(r"\bxcaddy build (v[0-9][^\s\\]+)", text)
+    xcaddy = re.search(r"go install github.com/caddyserver/xcaddy/cmd/xcaddy@(v[0-9][^\s\\]+)", text)
+    jose_v3 = re.search(r"go mod download github.com/go-jose/go-jose/v3@(v[0-9][^\s\\]+)", text)
+    if not (caddy and xcaddy and jose_v3 and patch.is_file()):
+        raise ValueError("Caddy Go dependencies or the local go-jose/v3 patch are missing")
+    pins["github.com/caddyserver/caddy/v2"] = caddy.group(1)
+    pins["github.com/caddyserver/xcaddy"] = xcaddy.group(1)
+    pins["github.com/go-jose/go-jose/v3"] = jose_v3.group(1)
+
+    components = []
+    for module, version in sorted(pins.items()):
+        component = {
+            "type": "go-module",
+            "name": module,
+            "version": version,
+            "source": f"https://{re.sub(r'/v[0-9]+$', '', module) if module.startswith('github.com/') else module}",
+            "pinFile": str(dockerfile.relative_to(ROOT)),
+        }
+        if module == "github.com/caddyserver/xcaddy":
+            component["buildOnly"] = True
+        if module == "github.com/go-jose/go-jose/v3":
+            component["patchFile"] = str(patch.relative_to(ROOT))
+            component["patchSha256"] = sha256_file(patch)
+        components.append(component)
     return components
 
 
@@ -194,7 +240,7 @@ def vendored_components():
         metadata = json.loads(read_text(yubikit / "upstream.json"))
         files = sorted([*yubikit.glob("Sources/**/*.swift"), *[
             yubikit / name for name in ("Package.swift", "LICENSE", "UPSTREAM.md",
-                                        "upstream.json", "upstream-sha256.json", "presence-accessor.patch")
+                                        "upstream.json", "upstream-sha256.json", metadata["patch"])
         ]])
         tree_digest = hashlib.sha256()
         for path in files:
@@ -257,6 +303,7 @@ def make_sbom():
     components.extend(workspace_components())
     components.extend(package_resolved_components())
     components.extend(docker_components())
+    components.extend(caddy_go_components())
     components.extend(python_components())
     components.extend(bun_components())
     components.extend(vendored_components())
@@ -266,8 +313,10 @@ def make_sbom():
         "generatedBy": "scripts/generate-sbom.py",
         "inputs": [
             "NoctweaveRelayServer/Package.resolved",
+            "NoctweaveSecurityKeys/Package.resolved",
             "NoctweaveRelayServer/Dockerfile",
             "NoctweaveRelayServer/Dockerfile.caddy-l4",
+            "NoctweaveRelayServer/CaddyPatches/go-jose-v3-rsa-limit.patch",
             "NoctweaveRelayServer/Dockerfile.coturn",
             "NoctweaveRelayServer/ReticulumBridge/Dockerfile",
             "NoctweaveRelayServer/ReticulumBridge/requirements.txt",
@@ -297,6 +346,8 @@ def cyclonedx_component(component):
         image_name = name or "unknown"
         image_version = component.get("version")
         purl = f"pkg:docker/{image_name}@{image_version}" if image_version else f"pkg:docker/{image_name}"
+    elif component_type == "go-module":
+        purl = f"pkg:golang/{name}@{version}"
     elif name == "YubiKit Swift":
         purl = f"pkg:github/Yubico/yubikit-swift@{version}"
     elif name == "liboqs":
@@ -337,6 +388,14 @@ def cyclonedx_component(component):
         })
     if component.get("patchFile"):
         external_references.append({"type": "vcs", "url": f"file:{component['patchFile']}"})
+    if component.get("patchSha256"):
+        payload.setdefault("properties", []).append({
+            "name": "noctweave:patchSha256", "value": component["patchSha256"]
+        })
+    if component.get("buildOnly"):
+        payload.setdefault("properties", []).append({
+            "name": "noctweave:buildOnly", "value": "true"
+        })
     if component.get("license"):
         payload["licenses"] = [{"license": {"id": component["license"]}}]
     if external_references:

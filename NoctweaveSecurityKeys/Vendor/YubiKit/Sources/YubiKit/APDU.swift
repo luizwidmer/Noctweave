@@ -77,6 +77,6 @@ struct APDU: Sendable, CustomStringConvertible {
 
     /// A string representation of the APDU for debugging purposes.
     var description: String {
-        "APDU(cla: \(cla.hexValue), ins: \(ins.hexValue), p1: \(p1.hexValue), p2: \(p2.hexValue), command: \(command?.hexEncodedString ?? "nil")"
+        "APDU(cla: \(cla.hexValue), ins: \(ins.hexValue), p1: \(p1.hexValue), p2: \(p2.hexValue), commandBytes: \(command?.count ?? 0))"
     }
 }

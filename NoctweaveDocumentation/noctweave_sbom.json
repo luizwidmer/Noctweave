@@ -57,18 +57,26 @@
     {
       "name": "swift-crypto",
       "pinFile": "NoctweaveRelayServer/Package.resolved",
-      "revision": "47d3869a7291f085c1fb9fb1e6d3b97a793f45c6",
+      "revision": "da9d28d69ebe3894b18376c8f2395c2f37b8448f",
       "source": "https://github.com/apple/swift-crypto.git",
       "type": "swift-package",
-      "version": "4.5.1"
+      "version": "4.5.2"
+    },
+    {
+      "name": "swift-log",
+      "pinFile": "NoctweaveSecurityKeys/Package.resolved",
+      "revision": "9c6fb14227f55d8f711ce3847dc2f419fb0ecacb",
+      "source": "https://github.com/apple/swift-log.git",
+      "type": "swift-package",
+      "version": "1.15.1"
     },
     {
       "name": "swift-nio",
       "pinFile": "NoctweaveRelayServer/Package.resolved",
-      "revision": "77b84ac2cd2ac9e4ac67d19f045fd5b434f56967",
+      "revision": "6db9d9abd92ad7399b8a564cafbb87d3507245fa",
       "source": "https://github.com/apple/swift-nio.git",
       "type": "swift-package",
-      "version": "2.101.0"
+      "version": "2.104.0"
     },
     {
       "name": "swift-system",
@@ -81,7 +89,7 @@
     {
       "name": "swift",
       "pinFile": "NoctweaveRelayServer/Dockerfile",
-      "revision": "cb9552a535de8d1a92373351a35ced3813791b6cca6a380bdf179ff3f3122803",
+      "revision": "0a58f05d6c3d3ab48d3cc6f72202fce9bdda52f79f1f6e581c018fa70a590c67",
       "source": "Dockerfile FROM",
       "stage": "builder",
       "type": "container-base-image",
@@ -90,7 +98,7 @@
     {
       "name": "ubuntu",
       "pinFile": "NoctweaveRelayServer/Dockerfile",
-      "revision": "a8cdd2158a73d7e5c02aa351fe269f48f57cf710a241db86e9ede371fc150149",
+      "revision": "076e7bf82319619f28dd0aa9c02ab34b055ad37100395b4f49a2ffba04fb5e11",
       "source": "Dockerfile FROM",
       "stage": "stage-2",
       "type": "container-base-image",
@@ -107,7 +115,7 @@
     {
       "name": "caddy",
       "pinFile": "NoctweaveRelayServer/Dockerfile.caddy-l4",
-      "revision": "198d47eaee306d4d0c38a9960c89ff2c959aa29ad51d3e2dafa3e93ac961782a",
+      "revision": "c4cd20eaa0b69112fd5d4f721ffc9671687e1d5d0b155c8620cf7546dbef94c0",
       "source": "Dockerfile FROM",
       "stage": "builder",
       "type": "container-base-image",
@@ -116,7 +124,7 @@
     {
       "name": "caddy",
       "pinFile": "NoctweaveRelayServer/Dockerfile.caddy-l4",
-      "revision": "844f60b64e4724a5aa8245e019dace0d3f199f7433ce6c57676cb30a920dbad9",
+      "revision": "36c24ad91a7ff7bc4c87fe22bfa8df3c4b18da0773d73fc12ee2c52b98c0bb7e",
       "source": "Dockerfile FROM",
       "stage": "stage-2",
       "type": "container-base-image",
@@ -125,20 +133,93 @@
     {
       "name": "coturn/coturn",
       "pinFile": "NoctweaveRelayServer/Dockerfile.coturn",
-      "revision": "b73dfc469b30ee62ba6c0a1824c502e24438f15e49b5f2dec81fa10315410509",
+      "revision": "c29135c08565810d37053f384584392b7c24b69570fc81a721b878d6fe63e04e",
       "source": "Dockerfile FROM",
       "stage": "stage-1",
       "type": "container-base-image",
-      "version": "4.15.0-r0-alpine"
+      "version": "4.18.0-r0-alpine"
     },
     {
       "name": "python",
       "pinFile": "NoctweaveRelayServer/ReticulumBridge/Dockerfile",
-      "revision": "540c7d91f98ff6880174c40e99067bf5941eb54d818a7a5e094d188b196a934d",
+      "revision": "7984cf56ceaddebe4fefeb75d64000b9f45d8b77b11a09b24524da6cdc3af0c8",
       "source": "Dockerfile FROM",
       "stage": "stage-1",
       "type": "container-base-image",
       "version": "3.13-alpine"
+    },
+    {
+      "name": "github.com/caddyserver/caddy/v2",
+      "pinFile": "NoctweaveRelayServer/Dockerfile.caddy-l4",
+      "source": "https://github.com/caddyserver/caddy",
+      "type": "go-module",
+      "version": "v2.11.7"
+    },
+    {
+      "buildOnly": true,
+      "name": "github.com/caddyserver/xcaddy",
+      "pinFile": "NoctweaveRelayServer/Dockerfile.caddy-l4",
+      "source": "https://github.com/caddyserver/xcaddy",
+      "type": "go-module",
+      "version": "v0.4.7"
+    },
+    {
+      "name": "github.com/go-chi/chi/v5",
+      "pinFile": "NoctweaveRelayServer/Dockerfile.caddy-l4",
+      "source": "https://github.com/go-chi/chi",
+      "type": "go-module",
+      "version": "v5.4.0"
+    },
+    {
+      "name": "github.com/go-jose/go-jose/v3",
+      "patchFile": "NoctweaveRelayServer/CaddyPatches/go-jose-v3-rsa-limit.patch",
+      "patchSha256": "fc9d4b847367eef5de2bd9574ec277211b3a4564ce0b14240f01c179f020d8ad",
+      "pinFile": "NoctweaveRelayServer/Dockerfile.caddy-l4",
+      "source": "https://github.com/go-jose/go-jose",
+      "type": "go-module",
+      "version": "v3.0.5"
+    },
+    {
+      "name": "github.com/go-jose/go-jose/v4",
+      "pinFile": "NoctweaveRelayServer/Dockerfile.caddy-l4",
+      "source": "https://github.com/go-jose/go-jose",
+      "type": "go-module",
+      "version": "v4.1.6"
+    },
+    {
+      "name": "github.com/mholt/caddy-l4",
+      "pinFile": "NoctweaveRelayServer/Dockerfile.caddy-l4",
+      "source": "https://github.com/mholt/caddy-l4",
+      "type": "go-module",
+      "version": "v0.1.2"
+    },
+    {
+      "name": "golang.org/x/crypto",
+      "pinFile": "NoctweaveRelayServer/Dockerfile.caddy-l4",
+      "source": "https://golang.org/x/crypto",
+      "type": "go-module",
+      "version": "v0.58.0"
+    },
+    {
+      "name": "golang.org/x/net",
+      "pinFile": "NoctweaveRelayServer/Dockerfile.caddy-l4",
+      "source": "https://golang.org/x/net",
+      "type": "go-module",
+      "version": "v0.62.0"
+    },
+    {
+      "name": "golang.org/x/text",
+      "pinFile": "NoctweaveRelayServer/Dockerfile.caddy-l4",
+      "source": "https://golang.org/x/text",
+      "type": "go-module",
+      "version": "v0.43.0"
+    },
+    {
+      "name": "google.golang.org/grpc",
+      "pinFile": "NoctweaveRelayServer/Dockerfile.caddy-l4",
+      "source": "https://google.golang.org/grpc",
+      "type": "go-module",
+      "version": "v1.84.0"
     },
     {
       "name": "cffi",
@@ -152,25 +233,25 @@
       "name": "cryptography",
       "pinFile": "NoctweaveRelayServer/ReticulumBridge/requirements.txt",
       "revision": null,
-      "source": "https://pypi.org/project/cryptography/50.0.0/",
+      "source": "https://pypi.org/project/cryptography/50.0.2/",
       "type": "python-package",
-      "version": "50.0.0"
+      "version": "50.0.2"
     },
     {
       "name": "msgpack",
       "pinFile": "NoctweaveRelayServer/ReticulumBridge/requirements.txt",
       "revision": null,
-      "source": "https://pypi.org/project/msgpack/1.2.1/",
+      "source": "https://pypi.org/project/msgpack/1.2.4/",
       "type": "python-package",
-      "version": "1.2.1"
+      "version": "1.2.4"
     },
     {
       "name": "pycparser",
       "pinFile": "NoctweaveRelayServer/ReticulumBridge/requirements.txt",
       "revision": null,
-      "source": "https://pypi.org/project/pycparser/3.0/",
+      "source": "https://pypi.org/project/pycparser/3.12/",
       "type": "python-package",
-      "version": "3.0"
+      "version": "3.12"
     },
     {
       "name": "pyserial",
@@ -184,36 +265,9 @@
       "name": "rns",
       "pinFile": "NoctweaveRelayServer/ReticulumBridge/requirements.txt",
       "revision": null,
-      "source": "https://pypi.org/project/rns/1.4.2/",
+      "source": "https://pypi.org/project/rns/1.5.7/",
       "type": "python-package",
-      "version": "1.4.2"
-    },
-    {
-      "direct": false,
-      "name": "@babylonjs/core",
-      "pinFile": "NoctweaveRelayServer/bun.lock",
-      "revision": null,
-      "source": "https://www.npmjs.com/package/@babylonjs/core/v/7.54.3",
-      "type": "npm-package",
-      "version": "7.54.3"
-    },
-    {
-      "direct": false,
-      "name": "@dimforge/rapier3d-compat",
-      "pinFile": "NoctweaveRelayServer/bun.lock",
-      "revision": null,
-      "source": "https://www.npmjs.com/package/@dimforge/rapier3d-compat/v/0.12.0",
-      "type": "npm-package",
-      "version": "0.12.0"
-    },
-    {
-      "direct": false,
-      "name": "@malept/cross-spawn-promise",
-      "pinFile": "NoctweaveRelayServer/bun.lock",
-      "revision": null,
-      "source": "https://www.npmjs.com/package/@malept/cross-spawn-promise/v/1.1.1",
-      "type": "npm-package",
-      "version": "1.1.1"
+      "version": "1.5.7"
     },
     {
       "direct": true,
@@ -333,40 +387,13 @@
       "version": "2.6.2"
     },
     {
-      "direct": false,
-      "name": "@tootallnate/quickjs-emscripten",
-      "pinFile": "NoctweaveRelayServer/bun.lock",
-      "revision": null,
-      "source": "https://www.npmjs.com/package/@tootallnate/quickjs-emscripten/v/0.23.0",
-      "type": "npm-package",
-      "version": "0.23.0"
-    },
-    {
-      "direct": false,
-      "name": "@tweenjs/tween.js",
-      "pinFile": "NoctweaveRelayServer/bun.lock",
-      "revision": null,
-      "source": "https://www.npmjs.com/package/@tweenjs/tween.js/v/23.1.3",
-      "type": "npm-package",
-      "version": "23.1.3"
-    },
-    {
       "direct": true,
       "name": "@types/bun",
       "pinFile": "NoctweaveRelayServer/bun.lock",
       "revision": null,
-      "source": "https://www.npmjs.com/package/@types/bun/v/1.3.14",
+      "source": "https://www.npmjs.com/package/@types/bun/v/1.4.4",
       "type": "npm-package",
-      "version": "1.3.14"
-    },
-    {
-      "direct": false,
-      "name": "@types/node",
-      "pinFile": "NoctweaveRelayServer/bun.lock",
-      "revision": null,
-      "source": "https://www.npmjs.com/package/@types/node/v/17.0.45",
-      "type": "npm-package",
-      "version": "17.0.45"
+      "version": "1.4.4"
     },
     {
       "direct": false,
@@ -376,33 +403,6 @@
       "source": "https://www.npmjs.com/package/@types/node/v/26.1.1",
       "type": "npm-package",
       "version": "26.1.1"
-    },
-    {
-      "direct": false,
-      "name": "@types/stats.js",
-      "pinFile": "NoctweaveRelayServer/bun.lock",
-      "revision": null,
-      "source": "https://www.npmjs.com/package/@types/stats.js/v/0.17.4",
-      "type": "npm-package",
-      "version": "0.17.4"
-    },
-    {
-      "direct": true,
-      "name": "@types/three",
-      "pinFile": "NoctweaveRelayServer/bun.lock",
-      "revision": null,
-      "source": "https://www.npmjs.com/package/@types/three/v/0.185.1",
-      "type": "npm-package",
-      "version": "0.185.1"
-    },
-    {
-      "direct": false,
-      "name": "@types/webxr",
-      "pinFile": "NoctweaveRelayServer/bun.lock",
-      "revision": null,
-      "source": "https://www.npmjs.com/package/@types/webxr/v/0.5.24",
-      "type": "npm-package",
-      "version": "0.5.24"
     },
     {
       "direct": false,
@@ -586,282 +586,21 @@
     },
     {
       "direct": false,
-      "name": "agent-base",
-      "pinFile": "NoctweaveRelayServer/bun.lock",
-      "revision": null,
-      "source": "https://www.npmjs.com/package/agent-base/v/7.1.4",
-      "type": "npm-package",
-      "version": "7.1.4"
-    },
-    {
-      "direct": false,
-      "name": "ast-types",
-      "pinFile": "NoctweaveRelayServer/bun.lock",
-      "revision": null,
-      "source": "https://www.npmjs.com/package/ast-types/v/0.13.4",
-      "type": "npm-package",
-      "version": "0.13.4"
-    },
-    {
-      "direct": false,
-      "name": "basic-ftp",
-      "pinFile": "NoctweaveRelayServer/bun.lock",
-      "revision": null,
-      "source": "https://www.npmjs.com/package/basic-ftp/v/5.3.1",
-      "type": "npm-package",
-      "version": "5.3.1"
-    },
-    {
-      "direct": false,
       "name": "bun-types",
       "pinFile": "NoctweaveRelayServer/bun.lock",
       "revision": null,
-      "source": "https://www.npmjs.com/package/bun-types/v/1.3.14",
+      "source": "https://www.npmjs.com/package/bun-types/v/1.4.4",
       "type": "npm-package",
-      "version": "1.3.14"
-    },
-    {
-      "direct": false,
-      "name": "cross-spawn",
-      "pinFile": "NoctweaveRelayServer/bun.lock",
-      "revision": null,
-      "source": "https://www.npmjs.com/package/cross-spawn/v/7.0.6",
-      "type": "npm-package",
-      "version": "7.0.6"
-    },
-    {
-      "direct": false,
-      "name": "cross-spawn-windows-exe",
-      "pinFile": "NoctweaveRelayServer/bun.lock",
-      "revision": null,
-      "source": "https://www.npmjs.com/package/cross-spawn-windows-exe/v/1.2.0",
-      "type": "npm-package",
-      "version": "1.2.0"
-    },
-    {
-      "direct": false,
-      "name": "data-uri-to-buffer",
-      "pinFile": "NoctweaveRelayServer/bun.lock",
-      "revision": null,
-      "source": "https://www.npmjs.com/package/data-uri-to-buffer/v/6.0.2",
-      "type": "npm-package",
-      "version": "6.0.2"
-    },
-    {
-      "direct": false,
-      "name": "debug",
-      "pinFile": "NoctweaveRelayServer/bun.lock",
-      "revision": null,
-      "source": "https://www.npmjs.com/package/debug/v/4.4.3",
-      "type": "npm-package",
-      "version": "4.4.3"
-    },
-    {
-      "direct": false,
-      "name": "degenerator",
-      "pinFile": "NoctweaveRelayServer/bun.lock",
-      "revision": null,
-      "source": "https://www.npmjs.com/package/degenerator/v/5.0.1",
-      "type": "npm-package",
-      "version": "5.0.1"
+      "version": "1.4.4"
     },
     {
       "direct": true,
       "name": "electrobun",
       "pinFile": "NoctweaveRelayServer/bun.lock",
       "revision": null,
-      "source": "https://www.npmjs.com/package/electrobun/v/1.18.1",
+      "source": "https://www.npmjs.com/package/electrobun/v/2.0.5",
       "type": "npm-package",
-      "version": "1.18.1"
-    },
-    {
-      "direct": false,
-      "name": "escodegen",
-      "pinFile": "NoctweaveRelayServer/bun.lock",
-      "revision": null,
-      "source": "https://www.npmjs.com/package/escodegen/v/2.1.0",
-      "type": "npm-package",
-      "version": "2.1.0"
-    },
-    {
-      "direct": false,
-      "name": "esprima",
-      "pinFile": "NoctweaveRelayServer/bun.lock",
-      "revision": null,
-      "source": "https://www.npmjs.com/package/esprima/v/4.0.1",
-      "type": "npm-package",
-      "version": "4.0.1"
-    },
-    {
-      "direct": false,
-      "name": "estraverse",
-      "pinFile": "NoctweaveRelayServer/bun.lock",
-      "revision": null,
-      "source": "https://www.npmjs.com/package/estraverse/v/5.3.0",
-      "type": "npm-package",
-      "version": "5.3.0"
-    },
-    {
-      "direct": false,
-      "name": "esutils",
-      "pinFile": "NoctweaveRelayServer/bun.lock",
-      "revision": null,
-      "source": "https://www.npmjs.com/package/esutils/v/2.0.3",
-      "type": "npm-package",
-      "version": "2.0.3"
-    },
-    {
-      "direct": false,
-      "name": "fflate",
-      "pinFile": "NoctweaveRelayServer/bun.lock",
-      "revision": null,
-      "source": "https://www.npmjs.com/package/fflate/v/0.8.3",
-      "type": "npm-package",
-      "version": "0.8.3"
-    },
-    {
-      "direct": false,
-      "name": "get-uri",
-      "pinFile": "NoctweaveRelayServer/bun.lock",
-      "revision": null,
-      "source": "https://www.npmjs.com/package/get-uri/v/6.0.5",
-      "type": "npm-package",
-      "version": "6.0.5"
-    },
-    {
-      "direct": false,
-      "name": "http-proxy-agent",
-      "pinFile": "NoctweaveRelayServer/bun.lock",
-      "revision": null,
-      "source": "https://www.npmjs.com/package/http-proxy-agent/v/7.0.2",
-      "type": "npm-package",
-      "version": "7.0.2"
-    },
-    {
-      "direct": false,
-      "name": "https-proxy-agent",
-      "pinFile": "NoctweaveRelayServer/bun.lock",
-      "revision": null,
-      "source": "https://www.npmjs.com/package/https-proxy-agent/v/7.0.6",
-      "type": "npm-package",
-      "version": "7.0.6"
-    },
-    {
-      "direct": false,
-      "name": "ip-address",
-      "pinFile": "NoctweaveRelayServer/bun.lock",
-      "revision": null,
-      "source": "https://www.npmjs.com/package/ip-address/v/10.3.1",
-      "type": "npm-package",
-      "version": "10.3.1"
-    },
-    {
-      "direct": false,
-      "name": "is-docker",
-      "pinFile": "NoctweaveRelayServer/bun.lock",
-      "revision": null,
-      "source": "https://www.npmjs.com/package/is-docker/v/2.2.1",
-      "type": "npm-package",
-      "version": "2.2.1"
-    },
-    {
-      "direct": false,
-      "name": "is-wsl",
-      "pinFile": "NoctweaveRelayServer/bun.lock",
-      "revision": null,
-      "source": "https://www.npmjs.com/package/is-wsl/v/2.2.0",
-      "type": "npm-package",
-      "version": "2.2.0"
-    },
-    {
-      "direct": false,
-      "name": "isexe",
-      "pinFile": "NoctweaveRelayServer/bun.lock",
-      "revision": null,
-      "source": "https://www.npmjs.com/package/isexe/v/2.0.0",
-      "type": "npm-package",
-      "version": "2.0.0"
-    },
-    {
-      "direct": false,
-      "name": "lru-cache",
-      "pinFile": "NoctweaveRelayServer/bun.lock",
-      "revision": null,
-      "source": "https://www.npmjs.com/package/lru-cache/v/7.18.3",
-      "type": "npm-package",
-      "version": "7.18.3"
-    },
-    {
-      "direct": false,
-      "name": "meshoptimizer",
-      "pinFile": "NoctweaveRelayServer/bun.lock",
-      "revision": null,
-      "source": "https://www.npmjs.com/package/meshoptimizer/v/1.1.1",
-      "type": "npm-package",
-      "version": "1.1.1"
-    },
-    {
-      "direct": false,
-      "name": "minimist",
-      "pinFile": "NoctweaveRelayServer/bun.lock",
-      "revision": null,
-      "source": "https://www.npmjs.com/package/minimist/v/1.2.8",
-      "type": "npm-package",
-      "version": "1.2.8"
-    },
-    {
-      "direct": false,
-      "name": "ms",
-      "pinFile": "NoctweaveRelayServer/bun.lock",
-      "revision": null,
-      "source": "https://www.npmjs.com/package/ms/v/2.1.3",
-      "type": "npm-package",
-      "version": "2.1.3"
-    },
-    {
-      "direct": false,
-      "name": "netmask",
-      "pinFile": "NoctweaveRelayServer/bun.lock",
-      "revision": null,
-      "source": "https://www.npmjs.com/package/netmask/v/2.1.1",
-      "type": "npm-package",
-      "version": "2.1.1"
-    },
-    {
-      "direct": false,
-      "name": "pac-proxy-agent",
-      "pinFile": "NoctweaveRelayServer/bun.lock",
-      "revision": null,
-      "source": "https://www.npmjs.com/package/pac-proxy-agent/v/7.2.0",
-      "type": "npm-package",
-      "version": "7.2.0"
-    },
-    {
-      "direct": false,
-      "name": "pac-resolver",
-      "pinFile": "NoctweaveRelayServer/bun.lock",
-      "revision": null,
-      "source": "https://www.npmjs.com/package/pac-resolver/v/7.0.1",
-      "type": "npm-package",
-      "version": "7.0.1"
-    },
-    {
-      "direct": false,
-      "name": "path-key",
-      "pinFile": "NoctweaveRelayServer/bun.lock",
-      "revision": null,
-      "source": "https://www.npmjs.com/package/path-key/v/3.1.1",
-      "type": "npm-package",
-      "version": "3.1.1"
-    },
-    {
-      "direct": false,
-      "name": "png-to-ico",
-      "pinFile": "NoctweaveRelayServer/bun.lock",
-      "revision": null,
-      "source": "https://www.npmjs.com/package/png-to-ico/v/2.1.8",
-      "type": "npm-package",
-      "version": "2.1.8"
+      "version": "2.0.5"
     },
     {
       "direct": true,
@@ -871,114 +610,6 @@
       "source": "https://www.npmjs.com/package/png2icons/v/2.0.1",
       "type": "npm-package",
       "version": "2.0.1"
-    },
-    {
-      "direct": false,
-      "name": "pngjs",
-      "pinFile": "NoctweaveRelayServer/bun.lock",
-      "revision": null,
-      "source": "https://www.npmjs.com/package/pngjs/v/6.0.0",
-      "type": "npm-package",
-      "version": "6.0.0"
-    },
-    {
-      "direct": false,
-      "name": "proxy-agent",
-      "pinFile": "NoctweaveRelayServer/bun.lock",
-      "revision": null,
-      "source": "https://www.npmjs.com/package/proxy-agent/v/6.5.0",
-      "type": "npm-package",
-      "version": "6.5.0"
-    },
-    {
-      "direct": false,
-      "name": "proxy-from-env",
-      "pinFile": "NoctweaveRelayServer/bun.lock",
-      "revision": null,
-      "source": "https://www.npmjs.com/package/proxy-from-env/v/1.1.0",
-      "type": "npm-package",
-      "version": "1.1.0"
-    },
-    {
-      "direct": false,
-      "name": "rcedit",
-      "pinFile": "NoctweaveRelayServer/bun.lock",
-      "revision": null,
-      "source": "https://www.npmjs.com/package/rcedit/v/4.0.1",
-      "type": "npm-package",
-      "version": "4.0.1"
-    },
-    {
-      "direct": false,
-      "name": "shebang-command",
-      "pinFile": "NoctweaveRelayServer/bun.lock",
-      "revision": null,
-      "source": "https://www.npmjs.com/package/shebang-command/v/2.0.0",
-      "type": "npm-package",
-      "version": "2.0.0"
-    },
-    {
-      "direct": false,
-      "name": "shebang-regex",
-      "pinFile": "NoctweaveRelayServer/bun.lock",
-      "revision": null,
-      "source": "https://www.npmjs.com/package/shebang-regex/v/3.0.0",
-      "type": "npm-package",
-      "version": "3.0.0"
-    },
-    {
-      "direct": false,
-      "name": "smart-buffer",
-      "pinFile": "NoctweaveRelayServer/bun.lock",
-      "revision": null,
-      "source": "https://www.npmjs.com/package/smart-buffer/v/4.2.0",
-      "type": "npm-package",
-      "version": "4.2.0"
-    },
-    {
-      "direct": false,
-      "name": "socks",
-      "pinFile": "NoctweaveRelayServer/bun.lock",
-      "revision": null,
-      "source": "https://www.npmjs.com/package/socks/v/2.8.9",
-      "type": "npm-package",
-      "version": "2.8.9"
-    },
-    {
-      "direct": false,
-      "name": "socks-proxy-agent",
-      "pinFile": "NoctweaveRelayServer/bun.lock",
-      "revision": null,
-      "source": "https://www.npmjs.com/package/socks-proxy-agent/v/8.0.5",
-      "type": "npm-package",
-      "version": "8.0.5"
-    },
-    {
-      "direct": false,
-      "name": "source-map",
-      "pinFile": "NoctweaveRelayServer/bun.lock",
-      "revision": null,
-      "source": "https://www.npmjs.com/package/source-map/v/0.6.1",
-      "type": "npm-package",
-      "version": "0.6.1"
-    },
-    {
-      "direct": false,
-      "name": "three",
-      "pinFile": "NoctweaveRelayServer/bun.lock",
-      "revision": null,
-      "source": "https://www.npmjs.com/package/three/v/0.165.0",
-      "type": "npm-package",
-      "version": "0.165.0"
-    },
-    {
-      "direct": false,
-      "name": "tslib",
-      "pinFile": "NoctweaveRelayServer/bun.lock",
-      "revision": null,
-      "source": "https://www.npmjs.com/package/tslib/v/2.8.1",
-      "type": "npm-package",
-      "version": "2.8.1"
     },
     {
       "direct": true,
@@ -999,15 +630,6 @@
       "version": "8.3.0"
     },
     {
-      "direct": false,
-      "name": "which",
-      "pinFile": "NoctweaveRelayServer/bun.lock",
-      "revision": null,
-      "source": "https://www.npmjs.com/package/which/v/2.0.2",
-      "type": "npm-package",
-      "version": "2.0.2"
-    },
-    {
       "fileCount": 46,
       "name": "liboqs.xcframework",
       "revision": "d573633dbe8a318a70a8b59c60a4a27d2c09d14afd2461bdad0322c24a33a59a",
@@ -1016,23 +638,25 @@
       "version": "0.16.0"
     },
     {
-      "fileCount": 179,
+      "fileCount": 201,
       "license": "Apache-2.0",
       "name": "YubiKit Swift",
-      "patchFile": "NoctweaveSecurityKeys/Vendor/YubiKit/presence-accessor.patch",
+      "patchFile": "NoctweaveSecurityKeys/Vendor/YubiKit/local-hardening.patch",
       "pinFile": "NoctweaveSecurityKeys/Vendor/YubiKit/upstream.json",
-      "revision": "de9c6f0259de1c3489403baae14411a2062248069b7a4b285998c50be6b6ffa6",
+      "revision": "19be34b99b5d56e0dfb09e800bb55a03b90888cb5db95452ad9aad63244762a3",
       "source": "https://github.com/Yubico/yubikit-swift",
       "type": "vendored-source",
-      "upstreamRevision": "f5a01653ec07530ffd300a02fc9818aa1298f13e",
-      "version": "1.3.0"
+      "upstreamRevision": "e19212f2efbca9af280e57542e669885de5acdc1",
+      "version": "1.4.0"
     }
   ],
   "generatedBy": "scripts/generate-sbom.py",
   "inputs": [
     "NoctweaveRelayServer/Package.resolved",
+    "NoctweaveSecurityKeys/Package.resolved",
     "NoctweaveRelayServer/Dockerfile",
     "NoctweaveRelayServer/Dockerfile.caddy-l4",
+    "NoctweaveRelayServer/CaddyPatches/go-jose-v3-rsa-limit.patch",
     "NoctweaveRelayServer/Dockerfile.coturn",
     "NoctweaveRelayServer/ReticulumBridge/Dockerfile",
     "NoctweaveRelayServer/ReticulumBridge/requirements.txt",

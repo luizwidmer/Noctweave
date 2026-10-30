@@ -552,13 +552,33 @@ extension NoctweavePQGroupRuntimeV2 {
         at date: Date = Date()
     ) throws -> [SignedGroupOpaqueRouteSetV2] {
         let target = targetState ?? record.signedState
-        guard target.groupId == record.groupId,
-              date.timeIntervalSince1970.isFinite,
+        guard target.groupId == record.groupId else {
+            throw GroupRouteSetAnnouncementV2Error.invalidAnnouncement
+        }
+        return try routeSetsForTransport(
+            credentials: target.activeCredentials,
+            additionalRouteSets: additionalRouteSets,
+            at: date
+        )
+    }
+
+    /// Resolves the old/new credential union before an epoch mutates state.
+    /// Removed credentials may no longer be present in the current route cache
+    /// after the commit, so Headless persists this exact selection in its intent.
+    public func routeSetsForTransport(
+        credentials: [GroupMemberCredentialV2],
+        additionalRouteSets: [SignedGroupOpaqueRouteSetV2] = [],
+        at date: Date = Date()
+    ) throws -> [SignedGroupOpaqueRouteSetV2] {
+        guard date.timeIntervalSince1970.isFinite,
+              credentials.count <= NoctweaveGroupArchitectureV2.maximumActiveExperimentalCredentials,
+              credentials.allSatisfy({ $0.isStructurallyValid }),
+              Set(credentials.map(\.credentialHandle)).count == credentials.count,
               Set(additionalRouteSets.map(\.ownerCredentialHandle)).count
                 == additionalRouteSets.count else {
             throw GroupRouteSetAnnouncementV2Error.invalidAnnouncement
         }
-        let required = target.activeCredentials.filter {
+        let required = credentials.filter {
             $0.memberHandle != record.localCredential.memberHandle
         }
         var selected = Dictionary(uniqueKeysWithValues: record.peerRouteCache.entries.map {
@@ -579,7 +599,9 @@ extension NoctweavePQGroupRuntimeV2 {
             }
             selected[routeSet.ownerCredentialHandle] = routeSet
         }
-        return try required.map { credential in
+        return try required.sorted {
+            $0.credentialHandle.rawValue < $1.credentialHandle.rawValue
+        }.map { credential in
             guard let routeSet = selected[credential.credentialHandle],
                   routeSet.ownerAdmissionDigest == credential.admissionDigest,
                   try routeSet.verifyThrowing(

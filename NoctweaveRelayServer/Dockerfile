@@ -1,7 +1,7 @@
 ARG LIBOQS_VERSION=0.16.0
 ARG LIBOQS_COMMIT=5a1a854b0dc9f2141bdc771c555ee60c37950183
 
-FROM swift:6.1-jammy@sha256:cb9552a535de8d1a92373351a35ced3813791b6cca6a380bdf179ff3f3122803 AS builder
+FROM swift:6.1-jammy@sha256:0a58f05d6c3d3ab48d3cc6f72202fce9bdda52f79f1f6e581c018fa70a590c67 AS builder
 ARG LIBOQS_VERSION
 ARG LIBOQS_COMMIT
 RUN apt-get update && apt-get upgrade -y && apt-get install -y --no-install-recommends \
@@ -32,7 +32,7 @@ RUN swift build -c release \
     && strip --strip-unneeded .build/release/NoctweaveRelayServer \
     && strip --strip-unneeded "$(readlink -f /usr/local/lib/liboqs.so.9)"
 
-FROM ubuntu:22.04@sha256:a8cdd2158a73d7e5c02aa351fe269f48f57cf710a241db86e9ede371fc150149
+FROM ubuntu:22.04@sha256:076e7bf82319619f28dd0aa9c02ab34b055ad37100395b4f49a2ffba04fb5e11
 RUN apt-get update && apt-get upgrade -y && apt-get install -y --no-install-recommends \
     ca-certificates \
     libcurl4 \

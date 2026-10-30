@@ -3,6 +3,7 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 RELAY_DIR="$ROOT_DIR/NoctweaveRelayServer"
+SECURITY_KEYS_DIR="$ROOT_DIR/NoctweaveSecurityKeys"
 SBOM_PATH="$ROOT_DIR/NoctweaveDocumentation/noctweave_sbom.json"
 CYCLONEDX_SBOM_PATH="$ROOT_DIR/NoctweaveDocumentation/noctweave_cyclonedx_sbom.json"
 BUN_LOCK_PATH="$RELAY_DIR/bun.lock"
@@ -16,13 +17,16 @@ VERIFY_TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/noctweave-release-check.XXXXXX")"
 trap 'rm -rf "$VERIFY_TMP_DIR"' EXIT
 
 echo "Resolving Swift package pins..."
-cp "$RELAY_DIR/Package.resolved" "$VERIFY_TMP_DIR/Package.resolved.before"
-(cd "$RELAY_DIR" && swift package resolve)
-if ! cmp -s "$VERIFY_TMP_DIR/Package.resolved.before" "$RELAY_DIR/Package.resolved"; then
-  diff -u "$VERIFY_TMP_DIR/Package.resolved.before" "$RELAY_DIR/Package.resolved"
-  echo "Swift package resolution changed Package.resolved." >&2
-  exit 1
-fi
+for package_dir in "$RELAY_DIR" "$SECURITY_KEYS_DIR"; do
+  package_name="$(basename "$package_dir")"
+  cp "$package_dir/Package.resolved" "$VERIFY_TMP_DIR/$package_name.Package.resolved.before"
+  (cd "$package_dir" && swift package resolve)
+  if ! cmp -s "$VERIFY_TMP_DIR/$package_name.Package.resolved.before" "$package_dir/Package.resolved"; then
+    diff -u "$VERIFY_TMP_DIR/$package_name.Package.resolved.before" "$package_dir/Package.resolved"
+    echo "Swift package resolution changed $package_dir/Package.resolved." >&2
+    exit 1
+  fi
+done
 
 echo "Checking immutable liboqs Docker source pin..."
 python3 - <<'PY' "$RELAY_DIR/Dockerfile" "$LIBOQS_VERSION" "$LIBOQS_COMMIT"
@@ -88,23 +92,43 @@ for suffix, marker in required.items():
 
 caddy = pathlib.Path(sys.argv[2]).read_text(encoding="utf-8")
 for marker in (
-    "xcaddy build v2.11.4",
+    "go install github.com/caddyserver/xcaddy/cmd/xcaddy@v0.4.7",
+    "xcaddy build v2.11.7",
     "github.com/mholt/caddy-l4@v0.1.2",
-    "golang.org/x/text@v0.39.0",
-    "google.golang.org/grpc@v1.82.1",
+    "github.com/go-jose/go-jose/v4@v4.1.6",
+    "github.com/go-chi/chi/v5@v5.4.0",
+    "go mod download github.com/go-jose/go-jose/v3@v3.0.5",
+    "patch --batch --fuzz=0 -p1 -d /opt/noctweave-go-jose-v3 < /tmp/go-jose-v3-rsa-limit.patch",
+    "go test -count=1 . ./json ./cipher",
+    "--replace github.com/go-jose/go-jose/v3=/opt/noctweave-go-jose-v3",
+    "golang.org/x/crypto@v0.58.0",
+    "golang.org/x/net@v0.62.0",
+    "golang.org/x/text@v0.43.0",
+    "google.golang.org/grpc@v1.84.0",
 ):
     if marker not in caddy:
         raise SystemExit(f"Caddy dependency floor missing: {marker}")
 
 reticulum = pathlib.Path(sys.argv[4]).read_text(encoding="utf-8")
-if "python -m pip uninstall --yes pip setuptools" not in reticulum:
-    raise SystemExit("Reticulum runtime must remove packaging tools after installation")
+if "python -m pip uninstall --yes pip setuptools urllib3" not in reticulum:
+    raise SystemExit("Reticulum runtime must remove unused packaging and HTTP tools after installation")
+if "RUN python -c 'import noctweave_reticulum_bridge'" not in reticulum:
+    raise SystemExit("Reticulum runtime must import the bridge after pruning unused packages")
+for path in (pathlib.Path(sys.argv[2]), pathlib.Path(sys.argv[3]), pathlib.Path(sys.argv[4])):
+    if "apk upgrade --no-cache" not in path.read_text(encoding="utf-8"):
+        raise SystemExit(f"Alpine runtime/build packages must be upgraded: {path}")
+for path in (pathlib.Path(sys.argv[2]), pathlib.Path(sys.argv[3])):
+    if "brotli-libs>=1.2.1-r0" not in path.read_text(encoding="utf-8"):
+        raise SystemExit(f"Caddy and coturn must enforce patched Brotli package floor: {path}")
 PY
 
 echo "Checking vendored Apple liboqs version..."
 for config in "$ROOT_DIR"/NoctweaveCore/Vendor/liboqs.xcframework/*/Headers/oqs/oqsconfig.h; do
   grep -q "OQS_VERSION_TEXT \"$LIBOQS_VERSION\"" "$config"
 done
+
+echo "Checking vendored YubiKit source and local patch..."
+python3 scripts/verify-yubikit-vendor.py
 
 echo "Refreshing machine-readable SBOM..."
 SBOM_CHECK_DIR="$VERIFY_TMP_DIR/sbom"
@@ -192,28 +216,36 @@ npm_components = {
 }
 if not npm_components:
     raise SystemExit("SBOM must inventory the resolved Bun/npm dependency graph")
-if ("ip-address", "10.3.1") not in npm_components:
-    raise SystemExit("SBOM must retain the patched ip-address 10.3.1 security floor")
-if '"ip-address": "10.3.1"' not in lock_text:
-    raise SystemExit("bun.lock must retain the ip-address 10.3.1 override")
+if any(name == "ip-address" and version != "10.3.1" for name, version in npm_components):
+    raise SystemExit("SBOM resolved a vulnerable ip-address release")
 if re.search(r'"ip-address": \["ip-address@(?!10\.3\.1")', lock_text):
     raise SystemExit("bun.lock resolved a vulnerable ip-address release")
 PY
-if command -v bun >/dev/null 2>&1; then
-  cp "$RELAY_DIR/package.json" "$VERIFY_TMP_DIR/package.json.before"
-  cp "$BUN_LOCK_PATH" "$VERIFY_TMP_DIR/bun.lock.before"
-  (cd "$RELAY_DIR" && bun install --frozen-lockfile --ignore-scripts >/dev/null)
-  for dependency_file in package.json bun.lock; do
-    if ! cmp -s "$VERIFY_TMP_DIR/$dependency_file.before" "$RELAY_DIR/$dependency_file"; then
-      diff -u "$VERIFY_TMP_DIR/$dependency_file.before" "$RELAY_DIR/$dependency_file"
-      echo "Frozen Bun install changed $dependency_file." >&2
-      exit 1
-    fi
-  done
-  (cd "$RELAY_DIR" && bun audit)
-else
-  echo "Bun not installed; release candidates must run frozen install and audit on a Bun host."
+if ! command -v bun >/dev/null 2>&1; then
+  echo "Bun 1.4.4 or newer is required for frozen desktop dependency verification." >&2
+  exit 1
 fi
+python3 - "$(bun --version)" <<'PY'
+import sys
+
+try:
+    version = tuple(int(part) for part in sys.argv[1].split("."))
+except ValueError as error:
+    raise SystemExit(f"Could not parse Bun version: {sys.argv[1]}") from error
+if version < (1, 4, 4):
+    raise SystemExit("Bun 1.4.4 or newer is required for release verification")
+PY
+cp "$RELAY_DIR/package.json" "$VERIFY_TMP_DIR/package.json.before"
+cp "$BUN_LOCK_PATH" "$VERIFY_TMP_DIR/bun.lock.before"
+(cd "$RELAY_DIR" && bun install --frozen-lockfile --ignore-scripts >/dev/null)
+for dependency_file in package.json bun.lock; do
+  if ! cmp -s "$VERIFY_TMP_DIR/$dependency_file.before" "$RELAY_DIR/$dependency_file"; then
+    diff -u "$VERIFY_TMP_DIR/$dependency_file.before" "$RELAY_DIR/$dependency_file"
+    echo "Frozen Bun install changed $dependency_file." >&2
+    exit 1
+  fi
+done
+(cd "$RELAY_DIR" && bun audit)
 
 echo "Checking local secret and state ignore rules..."
 for sensitive_path in \
@@ -236,49 +268,71 @@ import sys
 
 manifest = pathlib.Path(sys.argv[1]).read_text(encoding="utf-8")
 if not re.search(
-    r'swift-nio\.git",\s*exact:\s*"2\.101\.0"',
+    r'swift-nio\.git",\s*exact:\s*"2\.104\.0"',
     manifest,
 ):
-    raise SystemExit("SwiftNIO must retain the 2.101.0 security floor")
+    raise SystemExit("SwiftNIO must retain the 2.104.0 pin")
 if not re.search(
-    r'swift-crypto\.git",\s*exact:\s*"4\.5\.1"',
+    r'swift-crypto\.git",\s*exact:\s*"4\.5\.2"',
     manifest,
 ):
-    raise SystemExit("Swift Crypto must retain the 4.5.1 security floor")
+    raise SystemExit("Swift Crypto must retain the 4.5.2 pin")
 
 resolved = json.loads(pathlib.Path(sys.argv[2]).read_text(encoding="utf-8"))
 nio = next(
     (pin for pin in resolved.get("pins", []) if pin.get("identity") == "swift-nio"),
     None,
 )
-if not nio or nio.get("state", {}).get("version") != "2.101.0":
-    raise SystemExit("Package.resolved must retain SwiftNIO 2.101.0")
+if not nio or nio.get("state", {}).get("version") != "2.104.0":
+    raise SystemExit("Package.resolved must retain SwiftNIO 2.104.0")
 crypto = next(
     (pin for pin in resolved.get("pins", []) if pin.get("identity") == "swift-crypto"),
     None,
 )
-if not crypto or crypto.get("state", {}).get("version") != "4.5.1":
-    raise SystemExit("Package.resolved must retain Swift Crypto 4.5.1")
+if not crypto or crypto.get("state", {}).get("version") != "4.5.2":
+    raise SystemExit("Package.resolved must retain Swift Crypto 4.5.2")
+PY
+
+python3 - <<'PY' "$SECURITY_KEYS_DIR/Vendor/YubiKit/Package.swift" "$SECURITY_KEYS_DIR/Package.resolved"
+import json
+import pathlib
+import sys
+
+manifest = pathlib.Path(sys.argv[1]).read_text(encoding="utf-8")
+if '.package(url: "https://github.com/apple/swift-log.git", exact: "1.15.1")' not in manifest:
+    raise SystemExit("YubiKit's Swift Log dependency must remain pinned to 1.15.1")
+resolved = json.loads(pathlib.Path(sys.argv[2]).read_text(encoding="utf-8"))
+log = next((pin for pin in resolved.get("pins", []) if pin.get("identity") == "swift-log"), None)
+if not log or log.get("state", {}).get("version") != "1.15.1":
+    raise SystemExit("NoctweaveSecurityKeys/Package.resolved must retain Swift Log 1.15.1")
 PY
 
 echo "Running Linux relay test suite..."
 (cd "$RELAY_DIR" && swift test)
 
-if command -v docker >/dev/null 2>&1; then
-  echo "Checking Dockerfile syntax..."
-  docker build --check "$RELAY_DIR" >/dev/null
-  docker build --check -f "$RELAY_DIR/Dockerfile.caddy-l4" "$RELAY_DIR" >/dev/null
-  docker build --check -f "$RELAY_DIR/Dockerfile.coturn" "$RELAY_DIR" >/dev/null
-  docker build --check "$RELAY_DIR/ReticulumBridge" >/dev/null
-
-  if command -v trivy >/dev/null 2>&1; then
-    echo "Running Trivy filesystem scan..."
-    trivy fs --scanners vuln,secret --severity HIGH,CRITICAL --exit-code 1 "$ROOT_DIR"
-  else
-    echo "Trivy not installed; skipping container/filesystem vulnerability scan."
-  fi
-else
-  echo "Docker not installed; skipping Dockerfile and container checks."
+echo "Building and scanning final container images..."
+CONTAINER_SCAN_OUTPUT_DIR="${NOCTWEAVE_CONTAINER_SCAN_OUTPUT_DIR:-$VERIFY_TMP_DIR/container-scans}"
+NOCTWEAVE_TRIVY_CACHE_DIR="$VERIFY_TMP_DIR/trivy-cache" \
+  NOCTWEAVE_CONTAINER_SCAN_OUTPUT_DIR="$CONTAINER_SCAN_OUTPUT_DIR" \
+  NOCTWEAVE_CONTAINER_SCAN_RUN_TOKEN="$VERIFY_TMP_DIR" \
+  "$ROOT_DIR/scripts/verify-container-release.sh"
+if [[ ! -f "$CONTAINER_SCAN_OUTPUT_DIR/release-gate-complete" ]] || \
+  [[ "$(cat "$CONTAINER_SCAN_OUTPUT_DIR/release-gate-complete")" != "$VERIFY_TMP_DIR" ]]; then
+  echo "Final-image release verification stopped before all four images passed." >&2
+  exit 1
 fi
+
+echo "Running Trivy filesystem scan..."
+# These are retained audit/release history, the intentionally vulnerable v3
+# advisory sentinel, or local tool/source checkouts; none is an active release
+# dependency. The v3 sentinel has its own strict scan above.
+trivy fs --config "" --ignorefile "" --ignore-unfixed=false \
+  --cache-dir "$VERIFY_TMP_DIR/trivy-cache" --skip-db-update \
+  --skip-dirs .runtime --skip-dirs ReleaseArtifacts --skip-dirs .research \
+  --skip-dirs NoctweaveCore/liboqs \
+  --skip-dirs scripts/fixtures/caddy-go-jose-v3 \
+  --skip-dirs NoctweaveJS/.local --skip-dirs NoctweaveRelayServer/.local \
+  --skip-dirs NoctweaveJS/.hutch --skip-dirs NoctweaveRelayServer/.hutch \
+  --scanners vuln,secret --severity HIGH,CRITICAL --exit-code 1 "$ROOT_DIR"
 
 echo "Release verification complete."

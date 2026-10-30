@@ -143,7 +143,7 @@
       "version": "1.3.0"
     },
     {
-      "bom-ref": "swift-package:swift-crypto:4.5.1",
+      "bom-ref": "swift-package:swift-crypto:4.5.2",
       "externalReferences": [
         {
           "type": "distribution",
@@ -158,15 +158,38 @@
       "properties": [
         {
           "name": "noctweave:revision",
-          "value": "47d3869a7291f085c1fb9fb1e6d3b97a793f45c6"
+          "value": "da9d28d69ebe3894b18376c8f2395c2f37b8448f"
         }
       ],
-      "purl": "pkg:swift/swift-crypto@4.5.1",
+      "purl": "pkg:swift/swift-crypto@4.5.2",
       "type": "library",
-      "version": "4.5.1"
+      "version": "4.5.2"
     },
     {
-      "bom-ref": "swift-package:swift-nio:2.101.0",
+      "bom-ref": "swift-package:swift-log:1.15.1",
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://github.com/apple/swift-log.git"
+        },
+        {
+          "type": "documentation",
+          "url": "file:NoctweaveSecurityKeys/Package.resolved"
+        }
+      ],
+      "name": "swift-log",
+      "properties": [
+        {
+          "name": "noctweave:revision",
+          "value": "9c6fb14227f55d8f711ce3847dc2f419fb0ecacb"
+        }
+      ],
+      "purl": "pkg:swift/swift-log@1.15.1",
+      "type": "library",
+      "version": "1.15.1"
+    },
+    {
+      "bom-ref": "swift-package:swift-nio:2.104.0",
       "externalReferences": [
         {
           "type": "distribution",
@@ -181,12 +204,12 @@
       "properties": [
         {
           "name": "noctweave:revision",
-          "value": "77b84ac2cd2ac9e4ac67d19f045fd5b434f56967"
+          "value": "6db9d9abd92ad7399b8a564cafbb87d3507245fa"
         }
       ],
-      "purl": "pkg:swift/swift-nio@2.101.0",
+      "purl": "pkg:swift/swift-nio@2.104.0",
       "type": "library",
-      "version": "2.101.0"
+      "version": "2.104.0"
     },
     {
       "bom-ref": "swift-package:swift-system:1.6.3",
@@ -226,7 +249,7 @@
       "hashes": [
         {
           "alg": "SHA-256",
-          "content": "cb9552a535de8d1a92373351a35ced3813791b6cca6a380bdf179ff3f3122803"
+          "content": "0a58f05d6c3d3ab48d3cc6f72202fce9bdda52f79f1f6e581c018fa70a590c67"
         }
       ],
       "name": "swift",
@@ -249,7 +272,7 @@
       "hashes": [
         {
           "alg": "SHA-256",
-          "content": "a8cdd2158a73d7e5c02aa351fe269f48f57cf710a241db86e9ede371fc150149"
+          "content": "076e7bf82319619f28dd0aa9c02ab34b055ad37100395b4f49a2ffba04fb5e11"
         }
       ],
       "name": "ubuntu",
@@ -295,7 +318,7 @@
       "hashes": [
         {
           "alg": "SHA-256",
-          "content": "198d47eaee306d4d0c38a9960c89ff2c959aa29ad51d3e2dafa3e93ac961782a"
+          "content": "c4cd20eaa0b69112fd5d4f721ffc9671687e1d5d0b155c8620cf7546dbef94c0"
         }
       ],
       "name": "caddy",
@@ -318,7 +341,7 @@
       "hashes": [
         {
           "alg": "SHA-256",
-          "content": "844f60b64e4724a5aa8245e019dace0d3f199f7433ce6c57676cb30a920dbad9"
+          "content": "36c24ad91a7ff7bc4c87fe22bfa8df3c4b18da0773d73fc12ee2c52b98c0bb7e"
         }
       ],
       "name": "caddy",
@@ -327,7 +350,7 @@
       "version": "2"
     },
     {
-      "bom-ref": "container-base-image:coturn-coturn:4.15.0-r0-alpine:stage-1",
+      "bom-ref": "container-base-image:coturn-coturn:4.18.0-r0-alpine:stage-1",
       "externalReferences": [
         {
           "type": "distribution",
@@ -341,13 +364,13 @@
       "hashes": [
         {
           "alg": "SHA-256",
-          "content": "b73dfc469b30ee62ba6c0a1824c502e24438f15e49b5f2dec81fa10315410509"
+          "content": "c29135c08565810d37053f384584392b7c24b69570fc81a721b878d6fe63e04e"
         }
       ],
       "name": "coturn/coturn",
-      "purl": "pkg:docker/coturn/coturn@4.15.0-r0-alpine",
+      "purl": "pkg:docker/coturn/coturn@4.18.0-r0-alpine",
       "type": "container",
-      "version": "4.15.0-r0-alpine"
+      "version": "4.18.0-r0-alpine"
     },
     {
       "bom-ref": "container-base-image:python:3.13-alpine:stage-1",
@@ -364,13 +387,199 @@
       "hashes": [
         {
           "alg": "SHA-256",
-          "content": "540c7d91f98ff6880174c40e99067bf5941eb54d818a7a5e094d188b196a934d"
+          "content": "7984cf56ceaddebe4fefeb75d64000b9f45d8b77b11a09b24524da6cdc3af0c8"
         }
       ],
       "name": "python",
       "purl": "pkg:docker/python@3.13-alpine",
       "type": "container",
       "version": "3.13-alpine"
+    },
+    {
+      "bom-ref": "go-module:github.com-caddyserver-caddy-v2:v2.11.7",
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://github.com/caddyserver/caddy"
+        },
+        {
+          "type": "documentation",
+          "url": "file:NoctweaveRelayServer/Dockerfile.caddy-l4"
+        }
+      ],
+      "name": "github.com/caddyserver/caddy/v2",
+      "purl": "pkg:golang/github.com/caddyserver/caddy/v2@v2.11.7",
+      "type": "library",
+      "version": "v2.11.7"
+    },
+    {
+      "bom-ref": "go-module:github.com-caddyserver-xcaddy:v0.4.7",
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://github.com/caddyserver/xcaddy"
+        },
+        {
+          "type": "documentation",
+          "url": "file:NoctweaveRelayServer/Dockerfile.caddy-l4"
+        }
+      ],
+      "name": "github.com/caddyserver/xcaddy",
+      "properties": [
+        {
+          "name": "noctweave:buildOnly",
+          "value": "true"
+        }
+      ],
+      "purl": "pkg:golang/github.com/caddyserver/xcaddy@v0.4.7",
+      "type": "library",
+      "version": "v0.4.7"
+    },
+    {
+      "bom-ref": "go-module:github.com-go-chi-chi-v5:v5.4.0",
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://github.com/go-chi/chi"
+        },
+        {
+          "type": "documentation",
+          "url": "file:NoctweaveRelayServer/Dockerfile.caddy-l4"
+        }
+      ],
+      "name": "github.com/go-chi/chi/v5",
+      "purl": "pkg:golang/github.com/go-chi/chi/v5@v5.4.0",
+      "type": "library",
+      "version": "v5.4.0"
+    },
+    {
+      "bom-ref": "go-module:github.com-go-jose-go-jose-v3:v3.0.5",
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://github.com/go-jose/go-jose"
+        },
+        {
+          "type": "documentation",
+          "url": "file:NoctweaveRelayServer/Dockerfile.caddy-l4"
+        },
+        {
+          "type": "vcs",
+          "url": "file:NoctweaveRelayServer/CaddyPatches/go-jose-v3-rsa-limit.patch"
+        }
+      ],
+      "name": "github.com/go-jose/go-jose/v3",
+      "properties": [
+        {
+          "name": "noctweave:patchSha256",
+          "value": "fc9d4b847367eef5de2bd9574ec277211b3a4564ce0b14240f01c179f020d8ad"
+        }
+      ],
+      "purl": "pkg:golang/github.com/go-jose/go-jose/v3@v3.0.5",
+      "type": "library",
+      "version": "v3.0.5"
+    },
+    {
+      "bom-ref": "go-module:github.com-go-jose-go-jose-v4:v4.1.6",
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://github.com/go-jose/go-jose"
+        },
+        {
+          "type": "documentation",
+          "url": "file:NoctweaveRelayServer/Dockerfile.caddy-l4"
+        }
+      ],
+      "name": "github.com/go-jose/go-jose/v4",
+      "purl": "pkg:golang/github.com/go-jose/go-jose/v4@v4.1.6",
+      "type": "library",
+      "version": "v4.1.6"
+    },
+    {
+      "bom-ref": "go-module:github.com-mholt-caddy-l4:v0.1.2",
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://github.com/mholt/caddy-l4"
+        },
+        {
+          "type": "documentation",
+          "url": "file:NoctweaveRelayServer/Dockerfile.caddy-l4"
+        }
+      ],
+      "name": "github.com/mholt/caddy-l4",
+      "purl": "pkg:golang/github.com/mholt/caddy-l4@v0.1.2",
+      "type": "library",
+      "version": "v0.1.2"
+    },
+    {
+      "bom-ref": "go-module:golang.org-x-crypto:v0.58.0",
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://golang.org/x/crypto"
+        },
+        {
+          "type": "documentation",
+          "url": "file:NoctweaveRelayServer/Dockerfile.caddy-l4"
+        }
+      ],
+      "name": "golang.org/x/crypto",
+      "purl": "pkg:golang/golang.org/x/crypto@v0.58.0",
+      "type": "library",
+      "version": "v0.58.0"
+    },
+    {
+      "bom-ref": "go-module:golang.org-x-net:v0.62.0",
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://golang.org/x/net"
+        },
+        {
+          "type": "documentation",
+          "url": "file:NoctweaveRelayServer/Dockerfile.caddy-l4"
+        }
+      ],
+      "name": "golang.org/x/net",
+      "purl": "pkg:golang/golang.org/x/net@v0.62.0",
+      "type": "library",
+      "version": "v0.62.0"
+    },
+    {
+      "bom-ref": "go-module:golang.org-x-text:v0.43.0",
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://golang.org/x/text"
+        },
+        {
+          "type": "documentation",
+          "url": "file:NoctweaveRelayServer/Dockerfile.caddy-l4"
+        }
+      ],
+      "name": "golang.org/x/text",
+      "purl": "pkg:golang/golang.org/x/text@v0.43.0",
+      "type": "library",
+      "version": "v0.43.0"
+    },
+    {
+      "bom-ref": "go-module:google.golang.org-grpc:v1.84.0",
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://google.golang.org/grpc"
+        },
+        {
+          "type": "documentation",
+          "url": "file:NoctweaveRelayServer/Dockerfile.caddy-l4"
+        }
+      ],
+      "name": "google.golang.org/grpc",
+      "purl": "pkg:golang/google.golang.org/grpc@v1.84.0",
+      "type": "library",
+      "version": "v1.84.0"
     },
     {
       "bom-ref": "python-package:cffi:2.1.1",
@@ -390,11 +599,11 @@
       "version": "2.1.1"
     },
     {
-      "bom-ref": "python-package:cryptography:50.0.0",
+      "bom-ref": "python-package:cryptography:50.0.2",
       "externalReferences": [
         {
           "type": "distribution",
-          "url": "https://pypi.org/project/cryptography/50.0.0/"
+          "url": "https://pypi.org/project/cryptography/50.0.2/"
         },
         {
           "type": "documentation",
@@ -402,16 +611,16 @@
         }
       ],
       "name": "cryptography",
-      "purl": "pkg:pypi/cryptography@50.0.0",
+      "purl": "pkg:pypi/cryptography@50.0.2",
       "type": "library",
-      "version": "50.0.0"
+      "version": "50.0.2"
     },
     {
-      "bom-ref": "python-package:msgpack:1.2.1",
+      "bom-ref": "python-package:msgpack:1.2.4",
       "externalReferences": [
         {
           "type": "distribution",
-          "url": "https://pypi.org/project/msgpack/1.2.1/"
+          "url": "https://pypi.org/project/msgpack/1.2.4/"
         },
         {
           "type": "documentation",
@@ -419,16 +628,16 @@
         }
       ],
       "name": "msgpack",
-      "purl": "pkg:pypi/msgpack@1.2.1",
+      "purl": "pkg:pypi/msgpack@1.2.4",
       "type": "library",
-      "version": "1.2.1"
+      "version": "1.2.4"
     },
     {
-      "bom-ref": "python-package:pycparser:3.0",
+      "bom-ref": "python-package:pycparser:3.12",
       "externalReferences": [
         {
           "type": "distribution",
-          "url": "https://pypi.org/project/pycparser/3.0/"
+          "url": "https://pypi.org/project/pycparser/3.12/"
         },
         {
           "type": "documentation",
@@ -436,9 +645,9 @@
         }
       ],
       "name": "pycparser",
-      "purl": "pkg:pypi/pycparser@3.0",
+      "purl": "pkg:pypi/pycparser@3.12",
       "type": "library",
-      "version": "3.0"
+      "version": "3.12"
     },
     {
       "bom-ref": "python-package:pyserial:3.5",
@@ -458,11 +667,11 @@
       "version": "3.5"
     },
     {
-      "bom-ref": "python-package:rns:1.4.2",
+      "bom-ref": "python-package:rns:1.5.7",
       "externalReferences": [
         {
           "type": "distribution",
-          "url": "https://pypi.org/project/rns/1.4.2/"
+          "url": "https://pypi.org/project/rns/1.5.7/"
         },
         {
           "type": "documentation",
@@ -470,60 +679,9 @@
         }
       ],
       "name": "rns",
-      "purl": "pkg:pypi/rns@1.4.2",
+      "purl": "pkg:pypi/rns@1.5.7",
       "type": "library",
-      "version": "1.4.2"
-    },
-    {
-      "bom-ref": "npm-package:-babylonjs-core:7.54.3",
-      "externalReferences": [
-        {
-          "type": "distribution",
-          "url": "https://www.npmjs.com/package/@babylonjs/core/v/7.54.3"
-        },
-        {
-          "type": "documentation",
-          "url": "file:NoctweaveRelayServer/bun.lock"
-        }
-      ],
-      "name": "@babylonjs/core",
-      "purl": "pkg:npm/%40babylonjs/core@7.54.3",
-      "type": "library",
-      "version": "7.54.3"
-    },
-    {
-      "bom-ref": "npm-package:-dimforge-rapier3d-compat:0.12.0",
-      "externalReferences": [
-        {
-          "type": "distribution",
-          "url": "https://www.npmjs.com/package/@dimforge/rapier3d-compat/v/0.12.0"
-        },
-        {
-          "type": "documentation",
-          "url": "file:NoctweaveRelayServer/bun.lock"
-        }
-      ],
-      "name": "@dimforge/rapier3d-compat",
-      "purl": "pkg:npm/%40dimforge/rapier3d-compat@0.12.0",
-      "type": "library",
-      "version": "0.12.0"
-    },
-    {
-      "bom-ref": "npm-package:-malept-cross-spawn-promise:1.1.1",
-      "externalReferences": [
-        {
-          "type": "distribution",
-          "url": "https://www.npmjs.com/package/@malept/cross-spawn-promise/v/1.1.1"
-        },
-        {
-          "type": "documentation",
-          "url": "file:NoctweaveRelayServer/bun.lock"
-        }
-      ],
-      "name": "@malept/cross-spawn-promise",
-      "purl": "pkg:npm/%40malept/cross-spawn-promise@1.1.1",
-      "type": "library",
-      "version": "1.1.1"
+      "version": "1.5.7"
     },
     {
       "bom-ref": "npm-package:-resvg-resvg-js:2.6.2",
@@ -747,45 +905,11 @@
       "version": "2.6.2"
     },
     {
-      "bom-ref": "npm-package:-tootallnate-quickjs-emscripten:0.23.0",
+      "bom-ref": "npm-package:-types-bun:1.4.4",
       "externalReferences": [
         {
           "type": "distribution",
-          "url": "https://www.npmjs.com/package/@tootallnate/quickjs-emscripten/v/0.23.0"
-        },
-        {
-          "type": "documentation",
-          "url": "file:NoctweaveRelayServer/bun.lock"
-        }
-      ],
-      "name": "@tootallnate/quickjs-emscripten",
-      "purl": "pkg:npm/%40tootallnate/quickjs-emscripten@0.23.0",
-      "type": "library",
-      "version": "0.23.0"
-    },
-    {
-      "bom-ref": "npm-package:-tweenjs-tween.js:23.1.3",
-      "externalReferences": [
-        {
-          "type": "distribution",
-          "url": "https://www.npmjs.com/package/@tweenjs/tween.js/v/23.1.3"
-        },
-        {
-          "type": "documentation",
-          "url": "file:NoctweaveRelayServer/bun.lock"
-        }
-      ],
-      "name": "@tweenjs/tween.js",
-      "purl": "pkg:npm/%40tweenjs/tween.js@23.1.3",
-      "type": "library",
-      "version": "23.1.3"
-    },
-    {
-      "bom-ref": "npm-package:-types-bun:1.3.14",
-      "externalReferences": [
-        {
-          "type": "distribution",
-          "url": "https://www.npmjs.com/package/@types/bun/v/1.3.14"
+          "url": "https://www.npmjs.com/package/@types/bun/v/1.4.4"
         },
         {
           "type": "documentation",
@@ -793,26 +917,9 @@
         }
       ],
       "name": "@types/bun",
-      "purl": "pkg:npm/%40types/bun@1.3.14",
+      "purl": "pkg:npm/%40types/bun@1.4.4",
       "type": "library",
-      "version": "1.3.14"
-    },
-    {
-      "bom-ref": "npm-package:-types-node:17.0.45",
-      "externalReferences": [
-        {
-          "type": "distribution",
-          "url": "https://www.npmjs.com/package/@types/node/v/17.0.45"
-        },
-        {
-          "type": "documentation",
-          "url": "file:NoctweaveRelayServer/bun.lock"
-        }
-      ],
-      "name": "@types/node",
-      "purl": "pkg:npm/%40types/node@17.0.45",
-      "type": "library",
-      "version": "17.0.45"
+      "version": "1.4.4"
     },
     {
       "bom-ref": "npm-package:-types-node:26.1.1",
@@ -830,57 +937,6 @@
       "purl": "pkg:npm/%40types/node@26.1.1",
       "type": "library",
       "version": "26.1.1"
-    },
-    {
-      "bom-ref": "npm-package:-types-stats.js:0.17.4",
-      "externalReferences": [
-        {
-          "type": "distribution",
-          "url": "https://www.npmjs.com/package/@types/stats.js/v/0.17.4"
-        },
-        {
-          "type": "documentation",
-          "url": "file:NoctweaveRelayServer/bun.lock"
-        }
-      ],
-      "name": "@types/stats.js",
-      "purl": "pkg:npm/%40types/stats.js@0.17.4",
-      "type": "library",
-      "version": "0.17.4"
-    },
-    {
-      "bom-ref": "npm-package:-types-three:0.185.1",
-      "externalReferences": [
-        {
-          "type": "distribution",
-          "url": "https://www.npmjs.com/package/@types/three/v/0.185.1"
-        },
-        {
-          "type": "documentation",
-          "url": "file:NoctweaveRelayServer/bun.lock"
-        }
-      ],
-      "name": "@types/three",
-      "purl": "pkg:npm/%40types/three@0.185.1",
-      "type": "library",
-      "version": "0.185.1"
-    },
-    {
-      "bom-ref": "npm-package:-types-webxr:0.5.24",
-      "externalReferences": [
-        {
-          "type": "distribution",
-          "url": "https://www.npmjs.com/package/@types/webxr/v/0.5.24"
-        },
-        {
-          "type": "documentation",
-          "url": "file:NoctweaveRelayServer/bun.lock"
-        }
-      ],
-      "name": "@types/webxr",
-      "purl": "pkg:npm/%40types/webxr@0.5.24",
-      "type": "library",
-      "version": "0.5.24"
     },
     {
       "bom-ref": "npm-package:-typescript-typescript-aix-ppc64:7.0.2",
@@ -1223,62 +1279,11 @@
       "version": "7.0.2"
     },
     {
-      "bom-ref": "npm-package:agent-base:7.1.4",
+      "bom-ref": "npm-package:bun-types:1.4.4",
       "externalReferences": [
         {
           "type": "distribution",
-          "url": "https://www.npmjs.com/package/agent-base/v/7.1.4"
-        },
-        {
-          "type": "documentation",
-          "url": "file:NoctweaveRelayServer/bun.lock"
-        }
-      ],
-      "name": "agent-base",
-      "purl": "pkg:npm/agent-base@7.1.4",
-      "type": "library",
-      "version": "7.1.4"
-    },
-    {
-      "bom-ref": "npm-package:ast-types:0.13.4",
-      "externalReferences": [
-        {
-          "type": "distribution",
-          "url": "https://www.npmjs.com/package/ast-types/v/0.13.4"
-        },
-        {
-          "type": "documentation",
-          "url": "file:NoctweaveRelayServer/bun.lock"
-        }
-      ],
-      "name": "ast-types",
-      "purl": "pkg:npm/ast-types@0.13.4",
-      "type": "library",
-      "version": "0.13.4"
-    },
-    {
-      "bom-ref": "npm-package:basic-ftp:5.3.1",
-      "externalReferences": [
-        {
-          "type": "distribution",
-          "url": "https://www.npmjs.com/package/basic-ftp/v/5.3.1"
-        },
-        {
-          "type": "documentation",
-          "url": "file:NoctweaveRelayServer/bun.lock"
-        }
-      ],
-      "name": "basic-ftp",
-      "purl": "pkg:npm/basic-ftp@5.3.1",
-      "type": "library",
-      "version": "5.3.1"
-    },
-    {
-      "bom-ref": "npm-package:bun-types:1.3.14",
-      "externalReferences": [
-        {
-          "type": "distribution",
-          "url": "https://www.npmjs.com/package/bun-types/v/1.3.14"
+          "url": "https://www.npmjs.com/package/bun-types/v/1.4.4"
         },
         {
           "type": "documentation",
@@ -1286,101 +1291,16 @@
         }
       ],
       "name": "bun-types",
-      "purl": "pkg:npm/bun-types@1.3.14",
+      "purl": "pkg:npm/bun-types@1.4.4",
       "type": "library",
-      "version": "1.3.14"
+      "version": "1.4.4"
     },
     {
-      "bom-ref": "npm-package:cross-spawn:7.0.6",
+      "bom-ref": "npm-package:electrobun:2.0.5",
       "externalReferences": [
         {
           "type": "distribution",
-          "url": "https://www.npmjs.com/package/cross-spawn/v/7.0.6"
-        },
-        {
-          "type": "documentation",
-          "url": "file:NoctweaveRelayServer/bun.lock"
-        }
-      ],
-      "name": "cross-spawn",
-      "purl": "pkg:npm/cross-spawn@7.0.6",
-      "type": "library",
-      "version": "7.0.6"
-    },
-    {
-      "bom-ref": "npm-package:cross-spawn-windows-exe:1.2.0",
-      "externalReferences": [
-        {
-          "type": "distribution",
-          "url": "https://www.npmjs.com/package/cross-spawn-windows-exe/v/1.2.0"
-        },
-        {
-          "type": "documentation",
-          "url": "file:NoctweaveRelayServer/bun.lock"
-        }
-      ],
-      "name": "cross-spawn-windows-exe",
-      "purl": "pkg:npm/cross-spawn-windows-exe@1.2.0",
-      "type": "library",
-      "version": "1.2.0"
-    },
-    {
-      "bom-ref": "npm-package:data-uri-to-buffer:6.0.2",
-      "externalReferences": [
-        {
-          "type": "distribution",
-          "url": "https://www.npmjs.com/package/data-uri-to-buffer/v/6.0.2"
-        },
-        {
-          "type": "documentation",
-          "url": "file:NoctweaveRelayServer/bun.lock"
-        }
-      ],
-      "name": "data-uri-to-buffer",
-      "purl": "pkg:npm/data-uri-to-buffer@6.0.2",
-      "type": "library",
-      "version": "6.0.2"
-    },
-    {
-      "bom-ref": "npm-package:debug:4.4.3",
-      "externalReferences": [
-        {
-          "type": "distribution",
-          "url": "https://www.npmjs.com/package/debug/v/4.4.3"
-        },
-        {
-          "type": "documentation",
-          "url": "file:NoctweaveRelayServer/bun.lock"
-        }
-      ],
-      "name": "debug",
-      "purl": "pkg:npm/debug@4.4.3",
-      "type": "library",
-      "version": "4.4.3"
-    },
-    {
-      "bom-ref": "npm-package:degenerator:5.0.1",
-      "externalReferences": [
-        {
-          "type": "distribution",
-          "url": "https://www.npmjs.com/package/degenerator/v/5.0.1"
-        },
-        {
-          "type": "documentation",
-          "url": "file:NoctweaveRelayServer/bun.lock"
-        }
-      ],
-      "name": "degenerator",
-      "purl": "pkg:npm/degenerator@5.0.1",
-      "type": "library",
-      "version": "5.0.1"
-    },
-    {
-      "bom-ref": "npm-package:electrobun:1.18.1",
-      "externalReferences": [
-        {
-          "type": "distribution",
-          "url": "https://www.npmjs.com/package/electrobun/v/1.18.1"
+          "url": "https://www.npmjs.com/package/electrobun/v/2.0.5"
         },
         {
           "type": "documentation",
@@ -1388,366 +1308,9 @@
         }
       ],
       "name": "electrobun",
-      "purl": "pkg:npm/electrobun@1.18.1",
+      "purl": "pkg:npm/electrobun@2.0.5",
       "type": "library",
-      "version": "1.18.1"
-    },
-    {
-      "bom-ref": "npm-package:escodegen:2.1.0",
-      "externalReferences": [
-        {
-          "type": "distribution",
-          "url": "https://www.npmjs.com/package/escodegen/v/2.1.0"
-        },
-        {
-          "type": "documentation",
-          "url": "file:NoctweaveRelayServer/bun.lock"
-        }
-      ],
-      "name": "escodegen",
-      "purl": "pkg:npm/escodegen@2.1.0",
-      "type": "library",
-      "version": "2.1.0"
-    },
-    {
-      "bom-ref": "npm-package:esprima:4.0.1",
-      "externalReferences": [
-        {
-          "type": "distribution",
-          "url": "https://www.npmjs.com/package/esprima/v/4.0.1"
-        },
-        {
-          "type": "documentation",
-          "url": "file:NoctweaveRelayServer/bun.lock"
-        }
-      ],
-      "name": "esprima",
-      "purl": "pkg:npm/esprima@4.0.1",
-      "type": "library",
-      "version": "4.0.1"
-    },
-    {
-      "bom-ref": "npm-package:estraverse:5.3.0",
-      "externalReferences": [
-        {
-          "type": "distribution",
-          "url": "https://www.npmjs.com/package/estraverse/v/5.3.0"
-        },
-        {
-          "type": "documentation",
-          "url": "file:NoctweaveRelayServer/bun.lock"
-        }
-      ],
-      "name": "estraverse",
-      "purl": "pkg:npm/estraverse@5.3.0",
-      "type": "library",
-      "version": "5.3.0"
-    },
-    {
-      "bom-ref": "npm-package:esutils:2.0.3",
-      "externalReferences": [
-        {
-          "type": "distribution",
-          "url": "https://www.npmjs.com/package/esutils/v/2.0.3"
-        },
-        {
-          "type": "documentation",
-          "url": "file:NoctweaveRelayServer/bun.lock"
-        }
-      ],
-      "name": "esutils",
-      "purl": "pkg:npm/esutils@2.0.3",
-      "type": "library",
-      "version": "2.0.3"
-    },
-    {
-      "bom-ref": "npm-package:fflate:0.8.3",
-      "externalReferences": [
-        {
-          "type": "distribution",
-          "url": "https://www.npmjs.com/package/fflate/v/0.8.3"
-        },
-        {
-          "type": "documentation",
-          "url": "file:NoctweaveRelayServer/bun.lock"
-        }
-      ],
-      "name": "fflate",
-      "purl": "pkg:npm/fflate@0.8.3",
-      "type": "library",
-      "version": "0.8.3"
-    },
-    {
-      "bom-ref": "npm-package:get-uri:6.0.5",
-      "externalReferences": [
-        {
-          "type": "distribution",
-          "url": "https://www.npmjs.com/package/get-uri/v/6.0.5"
-        },
-        {
-          "type": "documentation",
-          "url": "file:NoctweaveRelayServer/bun.lock"
-        }
-      ],
-      "name": "get-uri",
-      "purl": "pkg:npm/get-uri@6.0.5",
-      "type": "library",
-      "version": "6.0.5"
-    },
-    {
-      "bom-ref": "npm-package:http-proxy-agent:7.0.2",
-      "externalReferences": [
-        {
-          "type": "distribution",
-          "url": "https://www.npmjs.com/package/http-proxy-agent/v/7.0.2"
-        },
-        {
-          "type": "documentation",
-          "url": "file:NoctweaveRelayServer/bun.lock"
-        }
-      ],
-      "name": "http-proxy-agent",
-      "purl": "pkg:npm/http-proxy-agent@7.0.2",
-      "type": "library",
-      "version": "7.0.2"
-    },
-    {
-      "bom-ref": "npm-package:https-proxy-agent:7.0.6",
-      "externalReferences": [
-        {
-          "type": "distribution",
-          "url": "https://www.npmjs.com/package/https-proxy-agent/v/7.0.6"
-        },
-        {
-          "type": "documentation",
-          "url": "file:NoctweaveRelayServer/bun.lock"
-        }
-      ],
-      "name": "https-proxy-agent",
-      "purl": "pkg:npm/https-proxy-agent@7.0.6",
-      "type": "library",
-      "version": "7.0.6"
-    },
-    {
-      "bom-ref": "npm-package:ip-address:10.3.1",
-      "externalReferences": [
-        {
-          "type": "distribution",
-          "url": "https://www.npmjs.com/package/ip-address/v/10.3.1"
-        },
-        {
-          "type": "documentation",
-          "url": "file:NoctweaveRelayServer/bun.lock"
-        }
-      ],
-      "name": "ip-address",
-      "purl": "pkg:npm/ip-address@10.3.1",
-      "type": "library",
-      "version": "10.3.1"
-    },
-    {
-      "bom-ref": "npm-package:is-docker:2.2.1",
-      "externalReferences": [
-        {
-          "type": "distribution",
-          "url": "https://www.npmjs.com/package/is-docker/v/2.2.1"
-        },
-        {
-          "type": "documentation",
-          "url": "file:NoctweaveRelayServer/bun.lock"
-        }
-      ],
-      "name": "is-docker",
-      "purl": "pkg:npm/is-docker@2.2.1",
-      "type": "library",
-      "version": "2.2.1"
-    },
-    {
-      "bom-ref": "npm-package:is-wsl:2.2.0",
-      "externalReferences": [
-        {
-          "type": "distribution",
-          "url": "https://www.npmjs.com/package/is-wsl/v/2.2.0"
-        },
-        {
-          "type": "documentation",
-          "url": "file:NoctweaveRelayServer/bun.lock"
-        }
-      ],
-      "name": "is-wsl",
-      "purl": "pkg:npm/is-wsl@2.2.0",
-      "type": "library",
-      "version": "2.2.0"
-    },
-    {
-      "bom-ref": "npm-package:isexe:2.0.0",
-      "externalReferences": [
-        {
-          "type": "distribution",
-          "url": "https://www.npmjs.com/package/isexe/v/2.0.0"
-        },
-        {
-          "type": "documentation",
-          "url": "file:NoctweaveRelayServer/bun.lock"
-        }
-      ],
-      "name": "isexe",
-      "purl": "pkg:npm/isexe@2.0.0",
-      "type": "library",
-      "version": "2.0.0"
-    },
-    {
-      "bom-ref": "npm-package:lru-cache:7.18.3",
-      "externalReferences": [
-        {
-          "type": "distribution",
-          "url": "https://www.npmjs.com/package/lru-cache/v/7.18.3"
-        },
-        {
-          "type": "documentation",
-          "url": "file:NoctweaveRelayServer/bun.lock"
-        }
-      ],
-      "name": "lru-cache",
-      "purl": "pkg:npm/lru-cache@7.18.3",
-      "type": "library",
-      "version": "7.18.3"
-    },
-    {
-      "bom-ref": "npm-package:meshoptimizer:1.1.1",
-      "externalReferences": [
-        {
-          "type": "distribution",
-          "url": "https://www.npmjs.com/package/meshoptimizer/v/1.1.1"
-        },
-        {
-          "type": "documentation",
-          "url": "file:NoctweaveRelayServer/bun.lock"
-        }
-      ],
-      "name": "meshoptimizer",
-      "purl": "pkg:npm/meshoptimizer@1.1.1",
-      "type": "library",
-      "version": "1.1.1"
-    },
-    {
-      "bom-ref": "npm-package:minimist:1.2.8",
-      "externalReferences": [
-        {
-          "type": "distribution",
-          "url": "https://www.npmjs.com/package/minimist/v/1.2.8"
-        },
-        {
-          "type": "documentation",
-          "url": "file:NoctweaveRelayServer/bun.lock"
-        }
-      ],
-      "name": "minimist",
-      "purl": "pkg:npm/minimist@1.2.8",
-      "type": "library",
-      "version": "1.2.8"
-    },
-    {
-      "bom-ref": "npm-package:ms:2.1.3",
-      "externalReferences": [
-        {
-          "type": "distribution",
-          "url": "https://www.npmjs.com/package/ms/v/2.1.3"
-        },
-        {
-          "type": "documentation",
-          "url": "file:NoctweaveRelayServer/bun.lock"
-        }
-      ],
-      "name": "ms",
-      "purl": "pkg:npm/ms@2.1.3",
-      "type": "library",
-      "version": "2.1.3"
-    },
-    {
-      "bom-ref": "npm-package:netmask:2.1.1",
-      "externalReferences": [
-        {
-          "type": "distribution",
-          "url": "https://www.npmjs.com/package/netmask/v/2.1.1"
-        },
-        {
-          "type": "documentation",
-          "url": "file:NoctweaveRelayServer/bun.lock"
-        }
-      ],
-      "name": "netmask",
-      "purl": "pkg:npm/netmask@2.1.1",
-      "type": "library",
-      "version": "2.1.1"
-    },
-    {
-      "bom-ref": "npm-package:pac-proxy-agent:7.2.0",
-      "externalReferences": [
-        {
-          "type": "distribution",
-          "url": "https://www.npmjs.com/package/pac-proxy-agent/v/7.2.0"
-        },
-        {
-          "type": "documentation",
-          "url": "file:NoctweaveRelayServer/bun.lock"
-        }
-      ],
-      "name": "pac-proxy-agent",
-      "purl": "pkg:npm/pac-proxy-agent@7.2.0",
-      "type": "library",
-      "version": "7.2.0"
-    },
-    {
-      "bom-ref": "npm-package:pac-resolver:7.0.1",
-      "externalReferences": [
-        {
-          "type": "distribution",
-          "url": "https://www.npmjs.com/package/pac-resolver/v/7.0.1"
-        },
-        {
-          "type": "documentation",
-          "url": "file:NoctweaveRelayServer/bun.lock"
-        }
-      ],
-      "name": "pac-resolver",
-      "purl": "pkg:npm/pac-resolver@7.0.1",
-      "type": "library",
-      "version": "7.0.1"
-    },
-    {
-      "bom-ref": "npm-package:path-key:3.1.1",
-      "externalReferences": [
-        {
-          "type": "distribution",
-          "url": "https://www.npmjs.com/package/path-key/v/3.1.1"
-        },
-        {
-          "type": "documentation",
-          "url": "file:NoctweaveRelayServer/bun.lock"
-        }
-      ],
-      "name": "path-key",
-      "purl": "pkg:npm/path-key@3.1.1",
-      "type": "library",
-      "version": "3.1.1"
-    },
-    {
-      "bom-ref": "npm-package:png-to-ico:2.1.8",
-      "externalReferences": [
-        {
-          "type": "distribution",
-          "url": "https://www.npmjs.com/package/png-to-ico/v/2.1.8"
-        },
-        {
-          "type": "documentation",
-          "url": "file:NoctweaveRelayServer/bun.lock"
-        }
-      ],
-      "name": "png-to-ico",
-      "purl": "pkg:npm/png-to-ico@2.1.8",
-      "type": "library",
-      "version": "2.1.8"
+      "version": "2.0.5"
     },
     {
       "bom-ref": "npm-package:png2icons:2.0.1",
@@ -1765,210 +1328,6 @@
       "purl": "pkg:npm/png2icons@2.0.1",
       "type": "library",
       "version": "2.0.1"
-    },
-    {
-      "bom-ref": "npm-package:pngjs:6.0.0",
-      "externalReferences": [
-        {
-          "type": "distribution",
-          "url": "https://www.npmjs.com/package/pngjs/v/6.0.0"
-        },
-        {
-          "type": "documentation",
-          "url": "file:NoctweaveRelayServer/bun.lock"
-        }
-      ],
-      "name": "pngjs",
-      "purl": "pkg:npm/pngjs@6.0.0",
-      "type": "library",
-      "version": "6.0.0"
-    },
-    {
-      "bom-ref": "npm-package:proxy-agent:6.5.0",
-      "externalReferences": [
-        {
-          "type": "distribution",
-          "url": "https://www.npmjs.com/package/proxy-agent/v/6.5.0"
-        },
-        {
-          "type": "documentation",
-          "url": "file:NoctweaveRelayServer/bun.lock"
-        }
-      ],
-      "name": "proxy-agent",
-      "purl": "pkg:npm/proxy-agent@6.5.0",
-      "type": "library",
-      "version": "6.5.0"
-    },
-    {
-      "bom-ref": "npm-package:proxy-from-env:1.1.0",
-      "externalReferences": [
-        {
-          "type": "distribution",
-          "url": "https://www.npmjs.com/package/proxy-from-env/v/1.1.0"
-        },
-        {
-          "type": "documentation",
-          "url": "file:NoctweaveRelayServer/bun.lock"
-        }
-      ],
-      "name": "proxy-from-env",
-      "purl": "pkg:npm/proxy-from-env@1.1.0",
-      "type": "library",
-      "version": "1.1.0"
-    },
-    {
-      "bom-ref": "npm-package:rcedit:4.0.1",
-      "externalReferences": [
-        {
-          "type": "distribution",
-          "url": "https://www.npmjs.com/package/rcedit/v/4.0.1"
-        },
-        {
-          "type": "documentation",
-          "url": "file:NoctweaveRelayServer/bun.lock"
-        }
-      ],
-      "name": "rcedit",
-      "purl": "pkg:npm/rcedit@4.0.1",
-      "type": "library",
-      "version": "4.0.1"
-    },
-    {
-      "bom-ref": "npm-package:shebang-command:2.0.0",
-      "externalReferences": [
-        {
-          "type": "distribution",
-          "url": "https://www.npmjs.com/package/shebang-command/v/2.0.0"
-        },
-        {
-          "type": "documentation",
-          "url": "file:NoctweaveRelayServer/bun.lock"
-        }
-      ],
-      "name": "shebang-command",
-      "purl": "pkg:npm/shebang-command@2.0.0",
-      "type": "library",
-      "version": "2.0.0"
-    },
-    {
-      "bom-ref": "npm-package:shebang-regex:3.0.0",
-      "externalReferences": [
-        {
-          "type": "distribution",
-          "url": "https://www.npmjs.com/package/shebang-regex/v/3.0.0"
-        },
-        {
-          "type": "documentation",
-          "url": "file:NoctweaveRelayServer/bun.lock"
-        }
-      ],
-      "name": "shebang-regex",
-      "purl": "pkg:npm/shebang-regex@3.0.0",
-      "type": "library",
-      "version": "3.0.0"
-    },
-    {
-      "bom-ref": "npm-package:smart-buffer:4.2.0",
-      "externalReferences": [
-        {
-          "type": "distribution",
-          "url": "https://www.npmjs.com/package/smart-buffer/v/4.2.0"
-        },
-        {
-          "type": "documentation",
-          "url": "file:NoctweaveRelayServer/bun.lock"
-        }
-      ],
-      "name": "smart-buffer",
-      "purl": "pkg:npm/smart-buffer@4.2.0",
-      "type": "library",
-      "version": "4.2.0"
-    },
-    {
-      "bom-ref": "npm-package:socks:2.8.9",
-      "externalReferences": [
-        {
-          "type": "distribution",
-          "url": "https://www.npmjs.com/package/socks/v/2.8.9"
-        },
-        {
-          "type": "documentation",
-          "url": "file:NoctweaveRelayServer/bun.lock"
-        }
-      ],
-      "name": "socks",
-      "purl": "pkg:npm/socks@2.8.9",
-      "type": "library",
-      "version": "2.8.9"
-    },
-    {
-      "bom-ref": "npm-package:socks-proxy-agent:8.0.5",
-      "externalReferences": [
-        {
-          "type": "distribution",
-          "url": "https://www.npmjs.com/package/socks-proxy-agent/v/8.0.5"
-        },
-        {
-          "type": "documentation",
-          "url": "file:NoctweaveRelayServer/bun.lock"
-        }
-      ],
-      "name": "socks-proxy-agent",
-      "purl": "pkg:npm/socks-proxy-agent@8.0.5",
-      "type": "library",
-      "version": "8.0.5"
-    },
-    {
-      "bom-ref": "npm-package:source-map:0.6.1",
-      "externalReferences": [
-        {
-          "type": "distribution",
-          "url": "https://www.npmjs.com/package/source-map/v/0.6.1"
-        },
-        {
-          "type": "documentation",
-          "url": "file:NoctweaveRelayServer/bun.lock"
-        }
-      ],
-      "name": "source-map",
-      "purl": "pkg:npm/source-map@0.6.1",
-      "type": "library",
-      "version": "0.6.1"
-    },
-    {
-      "bom-ref": "npm-package:three:0.165.0",
-      "externalReferences": [
-        {
-          "type": "distribution",
-          "url": "https://www.npmjs.com/package/three/v/0.165.0"
-        },
-        {
-          "type": "documentation",
-          "url": "file:NoctweaveRelayServer/bun.lock"
-        }
-      ],
-      "name": "three",
-      "purl": "pkg:npm/three@0.165.0",
-      "type": "library",
-      "version": "0.165.0"
-    },
-    {
-      "bom-ref": "npm-package:tslib:2.8.1",
-      "externalReferences": [
-        {
-          "type": "distribution",
-          "url": "https://www.npmjs.com/package/tslib/v/2.8.1"
-        },
-        {
-          "type": "documentation",
-          "url": "file:NoctweaveRelayServer/bun.lock"
-        }
-      ],
-      "name": "tslib",
-      "purl": "pkg:npm/tslib@2.8.1",
-      "type": "library",
-      "version": "2.8.1"
     },
     {
       "bom-ref": "npm-package:typescript:7.0.2",
@@ -2005,23 +1364,6 @@
       "version": "8.3.0"
     },
     {
-      "bom-ref": "npm-package:which:2.0.2",
-      "externalReferences": [
-        {
-          "type": "distribution",
-          "url": "https://www.npmjs.com/package/which/v/2.0.2"
-        },
-        {
-          "type": "documentation",
-          "url": "file:NoctweaveRelayServer/bun.lock"
-        }
-      ],
-      "name": "which",
-      "purl": "pkg:npm/which@2.0.2",
-      "type": "library",
-      "version": "2.0.2"
-    },
-    {
       "bom-ref": "vendored-binary:liboqs.xcframework:0.16.0",
       "externalReferences": [
         {
@@ -2040,7 +1382,7 @@
       "version": "0.16.0"
     },
     {
-      "bom-ref": "vendored-source:YubiKit-Swift:1.3.0",
+      "bom-ref": "vendored-source:YubiKit-Swift:1.4.0",
       "externalReferences": [
         {
           "type": "distribution",
@@ -2052,13 +1394,13 @@
         },
         {
           "type": "vcs",
-          "url": "file:NoctweaveSecurityKeys/Vendor/YubiKit/presence-accessor.patch"
+          "url": "file:NoctweaveSecurityKeys/Vendor/YubiKit/local-hardening.patch"
         }
       ],
       "hashes": [
         {
           "alg": "SHA-256",
-          "content": "de9c6f0259de1c3489403baae14411a2062248069b7a4b285998c50be6b6ffa6"
+          "content": "19be34b99b5d56e0dfb09e800bb55a03b90888cb5db95452ad9aad63244762a3"
         }
       ],
       "licenses": [
@@ -2072,12 +1414,12 @@
       "properties": [
         {
           "name": "noctweave:upstreamRevision",
-          "value": "f5a01653ec07530ffd300a02fc9818aa1298f13e"
+          "value": "e19212f2efbca9af280e57542e669885de5acdc1"
         }
       ],
-      "purl": "pkg:github/Yubico/yubikit-swift@1.3.0",
+      "purl": "pkg:github/Yubico/yubikit-swift@1.4.0",
       "type": "library",
-      "version": "1.3.0"
+      "version": "1.4.0"
     }
   ],
   "metadata": {

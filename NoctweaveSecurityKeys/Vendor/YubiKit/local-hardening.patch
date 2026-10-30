@@ -1,0 +1,111 @@
+--- a/YubiKit/YubiKit/APDU.swift
++++ b/YubiKit/YubiKit/APDU.swift
+@@ -77,6 +77,6 @@
+ 
+     /// A string representation of the APDU for debugging purposes.
+     var description: String {
+-        "APDU(cla: \(cla.hexValue), ins: \(ins.hexValue), p1: \(p1.hexValue), p2: \(p2.hexValue), command: \(command?.hexEncodedString ?? "nil")"
++        "APDU(cla: \(cla.hexValue), ins: \(ins.hexValue), p1: \(p1.hexValue), p2: \(p2.hexValue), commandBytes: \(command?.count ?? 0))"
+     }
+ }
+--- a/YubiKit/YubiKit/Connection/FIDO/HIDFIDOConnection.swift
++++ b/YubiKit/YubiKit/Connection/FIDO/HIDFIDOConnection.swift
+@@ -100,6 +100,12 @@
+         device: HID.YubiKeyDevice
+     ) async throws(FIDOConnectionError) -> HIDFIDOConnection {
+         try await HIDFIDOConnection(device: device)
++    }
++
++    /// Noctweave addition: the OS registry identity of the device on this authenticated
++    /// connection. This is process-local presence state, never a persisted key identity.
++    public func connectedRegistryEntryID() async throws(FIDOConnectionError) -> UInt64 {
++        try await HIDConnectionManager.shared.registryEntryID(for: locationID)
+     }
+ 
+     /// Closes the connection to the YubiKey.
+@@ -213,6 +219,17 @@
+             }
+             self.logger.debug("Enumerated FIDO HID devices", metadata: ["count": .stringConvertible(yubikeys.count)])
+             return yubikeys
++        }
++    }
++
++    // Noctweave addition: resolve the actual open handle, never a name or vendor match.
++    func registryEntryID(for locationID: Int) async throws(FIDOConnectionError) -> UInt64 {
++        try await runloop.perform { () -> Result<UInt64, FIDOConnectionError> in
++            guard let state = self.openConnections[locationID] else { return .failure(.connectionLost) }
++            var identity: UInt64 = 0
++            guard IORegistryEntryGetRegistryEntryID(IOHIDDeviceGetService(state.device), &identity) == KERN_SUCCESS,
++                  identity != 0 else { return .failure(.connectionLost) }
++            return .success(identity)
+         }
+     }
+ 
+--- a/YubiKit/YubiKit/SCP/SCPState.swift
++++ b/YubiKit/YubiKit/SCP/SCPState.swift
+@@ -25,9 +25,6 @@
+     }
+ 
+     func encrypt(_ data: Data) throws(EncryptionError) -> Data {
+-        #if DEBUG
+-        logger.trace("Plaintext data: \(data.hexEncodedString)")
+-        #endif
+         let paddedData = data.bitPadded()
+         var ivData = Data(count: 12)
+         ivData.append(self.encCounter.bigEndian.data)
+@@ -51,9 +48,6 @@
+         guard let unpadded = unpadData(decrypted) else {
+             throw .decryptionFailed(nil)  // Invalid padding in decrypted data
+         }
+-        #if DEBUG
+-        logger.trace("Plaintext resp: \(unpadded.hexEncodedString)")
+-        #endif
+         return unpadded
+     }
+ 
+--- a/YubiKit/YubiKit/Utilities/Logger+Extensions.swift
++++ b/YubiKit/YubiKit/Utilities/Logger+Extensions.swift
+@@ -83,7 +83,8 @@
+         line: UInt = #line
+     ) {
+         #if DEBUG
+-        trace("SEND: \(data().hexEncodedString)", file: file, function: function, line: line)
++        // Noctweave: APDUs can carry PINs and keys. Never log the payload.
++        trace("SEND (payload redacted)", file: file, function: function, line: line)
+         #endif
+     }
+ 
+@@ -94,7 +95,8 @@
+         line: UInt = #line
+     ) {
+         #if DEBUG
+-        trace("RECV: \(data().hexEncodedString)", file: file, function: function, line: line)
++        // Noctweave: responses can carry credential and key material.
++        trace("RECV (payload redacted)", file: file, function: function, line: line)
+         #endif
+     }
+ 
+--- a/YubiKit/YubiKit/Utilities/Logs.swift
++++ b/YubiKit/YubiKit/Utilities/Logs.swift
+@@ -19,10 +19,10 @@
+ ///
+ /// Defaults to `debug` on stdout when YubiKit is compiled with `DEBUG`, or `info` on stderr otherwise.
+ /// Use ``configure(logLevel:factory:)`` to override the level or backend.
+-/// Raw traffic requires both `DEBUG` and explicit opt-in at `trace`.
++/// This vendored copy redacts APDU and SCP payloads even when `trace` is enabled.
+ ///
+ /// > Warning: Debug messages can include account names and credential identifiers.
+-/// > Trace messages can include PINs and cryptographic keys. Protect captured logs before sharing them.
++/// > Protect captured logs before sharing them.
+ public enum Logs {
+     /// Sets YubiKit's log level and backend.
+     ///
+@@ -31,7 +31,7 @@
+     /// - Parameters:
+     ///   - logLevel: Minimum severity. Defaults to `.debug` when YubiKit is compiled with `DEBUG`,
+     ///     or `.info` otherwise. A custom backend uses its own default level.
+-    ///     Raw traffic requires `.trace` and YubiKit compiled with `DEBUG`.
++    ///     Payloads remain redacted even with `.trace` and YubiKit compiled with `DEBUG`.
+     ///   - factory: Creates a SwiftLog handler for each category label. If omitted, logs to the console.
+     ///     May run concurrently; must not call YubiKit logging.
+     public static func configure(

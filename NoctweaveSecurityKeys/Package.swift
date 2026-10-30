@@ -16,6 +16,9 @@ let package = Package(
             .product(name: "YubiKit", package: "YubiKit")
         ]),
         .executableTarget(name: "NoctweaveSecurityKeyBridge", dependencies: ["NoctweaveSecurityKeys"]),
-        .testTarget(name: "NoctweaveSecurityKeysTests", dependencies: ["NoctweaveSecurityKeys"])
+        .testTarget(name: "NoctweaveSecurityKeysTests", dependencies: [
+            "NoctweaveSecurityKeys",
+            .product(name: "YubiKit", package: "YubiKit")
+        ])
     ]
 )

@@ -77,7 +77,10 @@ public struct PersonaProfileV1: Codable, Equatable, Identifiable {
             forKey: .pendingGroupAdmissions
         )
         createdAt = try container.decode(Date.self, forKey: .createdAt)
-        guard try isStructurallyValidThrowing else {
+        // Each decoded relationship, runtime, and admission validated itself.
+        // Check only persona-wide constraints here to avoid revalidating every
+        // nested runtime for a second time on each state-store read.
+        guard hasValidAggregateStructureAfterRelationshipPreflight else {
             throw DecodingError.dataCorruptedError(
                 forKey: .relationships,
                 in: container,
@@ -87,7 +90,9 @@ public struct PersonaProfileV1: Codable, Equatable, Identifiable {
     }
 
     public func encode(to encoder: Encoder) throws {
-        guard try isStructurallyValidThrowing else {
+        // Nested encoders validate their own records below. This check covers
+        // persona-wide uniqueness and scope separation before writing bytes.
+        guard hasValidAggregateStructureAfterRelationshipPreflight else {
             throw EncodingError.invalidValue(
                 self,
                 EncodingError.Context(

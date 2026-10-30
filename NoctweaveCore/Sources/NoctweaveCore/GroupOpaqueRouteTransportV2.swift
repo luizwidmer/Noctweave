@@ -1397,6 +1397,13 @@ extension NoctweavePQGroupRuntimeV2 {
         }), date >= pending.preparedAt else {
             throw GroupRuntimeError.publicationNotFound
         }
+        if let boundRoutes = pending.transportRouteSets {
+            guard boundRoutes == routeSets.sorted(by: {
+                $0.ownerCredentialHandle.rawValue < $1.ownerCredentialHandle.rawValue
+            }) else {
+                throw GroupOpaqueRouteTransportV2Error.invalidRouteSet
+            }
+        }
         let recipients = record.signedState.activeCredentials.filter {
             $0.memberHandle != record.localCredential.memberHandle
         }
@@ -1446,6 +1453,13 @@ extension NoctweavePQGroupRuntimeV2 {
               intent.phase == .stateCommitted || intent.phase == .fanoutInProgress,
               date >= intent.updatedAt else {
             throw GroupRuntimeError.invalidIntent
+        }
+        if let boundRoutes = intent.transportRouteSets {
+            guard boundRoutes == routeSets.sorted(by: {
+                $0.ownerCredentialHandle.rawValue < $1.ownerCredentialHandle.rawValue
+            }) else {
+                throw GroupOpaqueRouteTransportV2Error.invalidRouteSet
+            }
         }
         let transitionRecipients = intent.transportRecipientCredentials.filter {
             $0.memberHandle != intent.localCredentialAfterCommit.memberHandle

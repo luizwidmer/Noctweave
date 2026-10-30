@@ -94,7 +94,7 @@ private func requireGroupCredentialAlgorithms(
 }
 
 /// An opaque credential handle generated independently for exactly one group.
-public struct GroupScopedCredentialHandleV2: RawRepresentable, Codable, Equatable, Hashable {
+public struct GroupScopedCredentialHandleV2: RawRepresentable, Codable, Equatable, Hashable, Sendable {
     public let rawValue: String
 
     private enum CodingKeys: String, CodingKey, CaseIterable {

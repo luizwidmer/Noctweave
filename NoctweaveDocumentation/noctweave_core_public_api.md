@@ -675,6 +675,61 @@ same-base artifact produces digest-only fork evidence. `join` additionally
 requires a caller-pinned `GroupJoinAnchorV2`; an unsolicited self-consistent
 Welcome is insufficient.
 
+`GroupRuntimeRecord` format 6 retains up to 256 selected accepted application
+events across normal recent-history compaction. Core also stores an
+`applicationVerificationReceipt` for each accepted event it retains. Each
+receipt binds the exact outer event digest to the signed envelope's group,
+epoch, transcript, credential, counter, and digest. A domain-separated rolling
+prefix digest advances over each consumed envelope digest, Core acceptance
+outcome, and accepted event digest, including a decrypted envelope whose
+application payload is rejected. Same-counter signed forks or different
+semantic verdicts therefore have different local frontiers. Receipt
+updates, ratchet advancement, and event acceptance or rejection share one
+durable write. The locally observed frontier is available through
+`verificationFrontier(epoch:credential:)`; `currentVerificationFrontiers()`
+includes exact zero-counter heads for new active credentials.
+
+Format-5 records load with empty receipt, frontier, binding, and protected-event
+sets. Their existing epoch is marked unverified; no proof is fabricated for its
+earlier events. A fresh epoch can establish tracked frontiers. Both versions
+re-encode as format 6. The group envelope and application-event wire formats
+do not change.
+
+After an application has independently verified a checkpoint and its local
+fanout has completed, it may call
+`replaceProtectedApplicationEvent(previousEventID:with:verificationFrontiers:)`.
+Core checks the supplied exact frontier positions against its previously
+authenticated receipts or current heads, checks the event author's pre-event
+head, then atomically pins the event and stores a durable local binding. The
+old pin and binding remain on save failure. The new event must exist as a
+non-pending application event; replacement uses the same content type.
+`snapshot().protectedVerificationFrontiers(for:)` returns nil when no verified
+binding exists. `removeProtectedApplicationEvent(eventID:)` removes a pin and
+its binding together when the application no longer needs that event; it does
+not create a policy-retirement tombstone.
+For a complete replacement snapshot series,
+`replaceProtectedApplicationEventSeries(retiring:with:)` verifies each new
+accepted event and frontier binding, then atomically adds all successor pins
+and retires previously Core-bound pins. The 256-pin limit applies to the final
+set; a failed write preserves the prior set. Retired IDs remain in
+`retiredProtectedApplicationEventIDs` while their events remain in Core's
+retained history, so the application can distinguish intentional retirement
+from an unpinned or missing checkpoint. Compaction removes obsolete retired
+IDs when their events leave history. Single-event pinning rejects any event
+already marked retired, so replayed ciphertext cannot re-protect it. Core
+cannot establish that the signed application snapshot is complete or that
+older retained messages no longer need a retired policy interval; the
+application must check both before using
+this API and reject late traffic that belongs to a retired interval.
+Calling the pin API without `verificationFrontiers` is retention only, including
+for migrated archive events: it creates no Core verification binding and must
+never be used as application-policy authority.
+The 4,096-event and 32 MiB record bounds still apply. These APIs authenticate
+local envelope history and retain bytes; they do not assign application roles,
+authorize policy transitions, or make missing history available to another
+replica. Applications must compare the exact owner-signed frontier set with
+Core's binding and fail closed if required proof is unavailable.
+
 Accepted local-credential removal is terminal and clears sendable work.
 `prepareDeletion`, `pendingDeletionPublication`, `markDeletionPublished`, and
 `processDeletionTombstone` retain an exact signed terminal tombstone, clear
@@ -697,6 +752,25 @@ before relay I/O. `resumeGroupTransport` retries those bytes without rebuilding
 the cryptographic operation. Inbound sync stores each route's cursor, digest
 chain, partial reassembly, processed effects, and quarantine before committing
 the relay cursor.
+
+Headless epoch preparation verifies the old/new recipient route union before
+committing the epoch and saves that exact selection in `GroupEpochIntent`.
+`maintainGroup` can therefore recreate an epoch transport operation if a crash
+occurs after the intent/state save but before the outbox save; an owner-only
+intent with no remote recipients is finalized. A low-level `prepareEpoch`
+caller can pass `transportRouteSets` for the same recovery guarantee. An older
+or direct-runtime intent without saved routes and without an outbox fails
+closed during Headless maintenance; the caller must recover it with its
+original authenticated route inputs. Recovered routes are captured at the
+saved intent time, while actual relay attempts still enforce current route
+authorization and may require operator or peer route recovery after expiry.
+Once the epoch is finalized, the intent drops its redundant route-set copy;
+the outbound operation retains its exact destination evidence.
+Headless application preparation likewise stores its authenticated route
+selection with the pending encrypted envelope before advancing the durable
+sender chain. Maintenance rebuilds a missing application outbox after restart
+or completes an owner-only publication. A direct-runtime pending application
+without saved routes or an outbox fails closed under Headless maintenance.
 
 Most applications should use the high-level `HeadlessMessagingClient` entry
 points:

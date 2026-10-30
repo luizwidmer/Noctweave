@@ -1,13 +1,17 @@
 {
-    email {$ACME_EMAIL}
+	email {$ACME_EMAIL}
 }
 
 {$RELAY_DOMAIN}:80 {
-    redir https://{$RELAY_DOMAIN}{uri} 308
+	redir https://{$RELAY_DOMAIN}{uri} 308
 }
 
 {$RELAY_DOMAIN}:443 {
-    @relay path /relay
-    reverse_proxy @relay {$RELAY_HTTP_UPSTREAM}
-    respond "Noctweave Relay is online. Use HTTPS or WSS on /relay." 200
+	@relay path /relay
+	handle @relay {
+		reverse_proxy {$RELAY_HTTP_UPSTREAM}
+	}
+	handle {
+		respond "Noctweave Relay is online. Use HTTPS or WSS on /relay." 200
+	}
 }

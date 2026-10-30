@@ -185,6 +185,28 @@ final class NoctweavePQGroupRuntimeV2Tests: XCTestCase {
             rejected.processedApplicationEnvelopes.first?.outcome,
             .rejectedConflictingEnvelope
         )
+        let poisonReceipt = try XCTUnwrap(
+            rejected.applicationVerificationReceipt(for: poison.id)
+        )
+        XCTAssertEqual(poisonReceipt.outcome, .rejectedConflictingEnvelope)
+        XCTAssertNil(poisonReceipt.eventDigest)
+        let alternateVerdictDigest = GroupApplicationVerificationReceiptV2.nextDigest(
+            previous: poisonReceipt.previousPrefixDigest,
+            eventID: poisonReceipt.eventID,
+            groupID: poisonReceipt.groupID,
+            epoch: poisonReceipt.epoch,
+            transcriptHash: poisonReceipt.transcriptHash,
+            credentialHandle: poisonReceipt.credentialHandle,
+            messageCounter: poisonReceipt.messageCounter,
+            envelopeDigest: poisonReceipt.envelopeDigest,
+            eventDigest: Data(repeating: 0x42, count: 32),
+            outcome: .accepted
+        )
+        XCTAssertNotEqual(alternateVerdictDigest, poisonReceipt.prefixDigest)
+        XCTAssertEqual(rejected.verificationFrontier(
+            epoch: poisonReceipt.epoch,
+            credential: poisonReceipt.credentialHandle
+        )?.nextCounter, 1)
         await XCTAssertThrowsErrorAsync(try await receiver.processApplicationEnvelope(
             poisonSeal.envelope,
             at: fixture.now.addingTimeInterval(2)
@@ -215,6 +237,19 @@ final class NoctweavePQGroupRuntimeV2Tests: XCTestCase {
             at: fixture.now.addingTimeInterval(3)
         )
         XCTAssertEqual(validResult, valid)
+        let accepted = await receiver.snapshot()
+        let validReceipt = try XCTUnwrap(
+            accepted.applicationVerificationReceipt(for: valid.id)
+        )
+        XCTAssertEqual(validReceipt.messageCounter, 1)
+        XCTAssertEqual(validReceipt.previousPrefixDigest, poisonReceipt.prefixDigest)
+        XCTAssertEqual(validReceipt.eventDigest, valid.digest)
+        let reopened = try await NoctweavePQGroupRuntimeV2.open(persistence: store)
+        let reopenedRecord = await reopened.snapshot()
+        XCTAssertEqual(
+            reopenedRecord.applicationVerificationReceipt(for: poison.id),
+            poisonReceipt
+        )
     }
 
     func testPerAuthorClientTransactionReplayIsBoundedAndDoesNotPinChain() async throws {
@@ -391,6 +426,763 @@ final class NoctweavePQGroupRuntimeV2Tests: XCTestCase {
             try record.compactedDurableState().events,
             Array(events.suffix(NoctweaveArchitectureV2.groupEventRecentWindow))
         )
+    }
+
+    func testProtectedApplicationCheckpointSurvivesCompactionAndAtomicReplacement() async throws {
+        let fixture = try makeSignedFixture()
+        let count = NoctweaveArchitectureV2.groupEventRecentWindow + 2
+        let content = try XCTUnwrap(EncodedContent.text("protected checkpoint"))
+        let events = (0..<count).map { index in
+            GroupConversationEventV2(
+                groupID: fixture.record.groupId,
+                authorMemberHandle: fixture.credential.memberHandle,
+                authorCredentialHandle: fixture.credential.credentialHandle,
+                createdAt: fixture.now.addingTimeInterval(TimeInterval(index)),
+                kind: .application,
+                content: content
+            )
+        }
+        let oldID = events[0].id
+        let newID = events[count - 1].id
+        let record = GroupRuntimeRecord(
+            groupId: fixture.record.groupId,
+            localCredential: fixture.credential,
+            signedState: fixture.state,
+            cryptoState: fixture.cryptoState,
+            events: events
+        )
+        let store = TestGroupRuntimeStore(record: record)
+        let runtime = try NoctweavePQGroupRuntimeV2(record: record, persistence: store)
+
+        try await runtime.replaceProtectedApplicationEvent(previousEventID: nil, with: oldID)
+        let pinned = await runtime.snapshot()
+        XCTAssertEqual(pinned.protectedApplicationEventIDs, [oldID])
+        XCTAssertTrue(pinned.events.contains { $0.id == oldID })
+        XCTAssertFalse(pinned.events.contains { $0.id == events[1].id })
+
+        await store.failNextSave()
+        do {
+            try await runtime.replaceProtectedApplicationEvent(previousEventID: oldID, with: newID)
+            XCTFail("Expected atomic replacement to fail with its persistence write")
+        } catch {
+            XCTAssertEqual(error as? TestGroupRuntimeStore.StoreError, .injectedFailure)
+        }
+        let afterFailure = await runtime.snapshot()
+        XCTAssertEqual(afterFailure.protectedApplicationEventIDs, [oldID])
+        try await runtime.replaceProtectedApplicationEvent(previousEventID: oldID, with: newID)
+        let replaced = await runtime.snapshot()
+        XCTAssertEqual(replaced.protectedApplicationEventIDs, [newID])
+        XCTAssertFalse(replaced.events.contains { $0.id == oldID })
+        XCTAssertTrue(replaced.events.contains { $0.id == newID })
+        let stored = await store.load()
+        XCTAssertEqual(stored?.protectedApplicationEventIDs, [newID])
+    }
+
+    func testProtectedApplicationCheckpointRejectsMissingAndReceiptEvents() async throws {
+        let fixture = try makeSignedFixture()
+        let application = GroupConversationEventV2(
+            groupID: fixture.record.groupId,
+            authorMemberHandle: fixture.credential.memberHandle,
+            authorCredentialHandle: fixture.credential.credentialHandle,
+            createdAt: fixture.now,
+            kind: .application,
+            content: try XCTUnwrap(.text("checkpoint"))
+        )
+        let receipt = GroupConversationEventV2(
+            groupID: fixture.record.groupId,
+            authorMemberHandle: fixture.credential.memberHandle,
+            authorCredentialHandle: fixture.credential.credentialHandle,
+            createdAt: fixture.now,
+            kind: .receipt,
+            content: try XCTUnwrap(.deliveryReceipt(targetEventId: application.id))
+        )
+        let record = GroupRuntimeRecord(
+            groupId: fixture.record.groupId,
+            localCredential: fixture.credential,
+            signedState: fixture.state,
+            cryptoState: fixture.cryptoState,
+            events: [application, receipt]
+        )
+        let runtime = try NoctweavePQGroupRuntimeV2(
+            record: record,
+            persistence: TestGroupRuntimeStore(record: record)
+        )
+        do {
+            try await runtime.replaceProtectedApplicationEvent(previousEventID: nil, with: UUID())
+            XCTFail("Missing event must be rejected")
+        } catch {
+            XCTAssertEqual(error as? GroupRuntimeError, .invalidRecord)
+        }
+        do {
+            try await runtime.replaceProtectedApplicationEvent(previousEventID: nil, with: receipt.id)
+            XCTFail("Receipts are not application checkpoints")
+        } catch {
+            XCTAssertEqual(error as? GroupRuntimeError, .invalidRecord)
+        }
+        let snapshot = await runtime.snapshot()
+        XCTAssertTrue(snapshot.protectedApplicationEventIDs.isEmpty)
+    }
+
+    func testProtectedApplicationCheckpointRejectsPendingLocalPublication() async throws {
+        let fixture = try makeSignedFixture()
+        let runtime = try NoctweavePQGroupRuntimeV2(
+            record: fixture.record,
+            persistence: TestGroupRuntimeStore(record: fixture.record)
+        )
+        let pending = GroupConversationEventV2(
+            groupID: fixture.record.groupId,
+            authorMemberHandle: fixture.credential.memberHandle,
+            authorCredentialHandle: fixture.credential.credentialHandle,
+            createdAt: fixture.now,
+            kind: .application,
+            content: try XCTUnwrap(.text("not yet published"))
+        )
+        _ = try await runtime.prepareApplicationEvent(pending, at: fixture.now)
+        do {
+            try await runtime.replaceProtectedApplicationEvent(previousEventID: nil, with: pending.id)
+            XCTFail("Unpublished local event cannot be a retained checkpoint")
+        } catch {
+            XCTAssertEqual(error as? GroupRuntimeError, .invalidRecord)
+        }
+        let snapshot = await runtime.snapshot()
+        XCTAssertTrue(snapshot.protectedApplicationEventIDs.isEmpty)
+        XCTAssertEqual(snapshot.pendingApplicationPublications.map(\.event.id), [pending.id])
+    }
+
+    func testVerifiedCheckpointBindingSurvivesRestartAndRejectsFalseFrontier() async throws {
+        let fixture = try makeSignedFixture()
+        let store = TestGroupRuntimeStore(record: fixture.record)
+        let runtime = try NoctweavePQGroupRuntimeV2(
+            record: fixture.record, persistence: store
+        )
+        let initialSnapshot = await runtime.snapshot()
+        let before = try XCTUnwrap(initialSnapshot.currentVerificationFrontiers())
+        let event = GroupConversationEventV2(
+            groupID: fixture.record.groupId,
+            authorMemberHandle: fixture.credential.memberHandle,
+            authorCredentialHandle: fixture.credential.credentialHandle,
+            createdAt: fixture.now,
+            kind: .application,
+            content: try XCTUnwrap(.text("owner checkpoint"))
+        )
+        _ = try await runtime.prepareApplicationEvent(event, at: fixture.now)
+        let prepared = await runtime.snapshot()
+        let receipt = try XCTUnwrap(prepared.applicationVerificationReceipt(for: event.id))
+        XCTAssertEqual(receipt.outcome, .accepted)
+        XCTAssertEqual(receipt.eventDigest, event.digest)
+        XCTAssertEqual(receipt.messageCounter, 0)
+        XCTAssertEqual(receipt.previousPrefixDigest, before[0].prefixDigest)
+        XCTAssertEqual(receipt.groupID, event.groupID)
+        try assertExactRoundTrip(receipt, as: GroupApplicationVerificationReceiptV2.self)
+        try assertExactRoundTrip(before[0], as: GroupApplicationVerificationFrontierV2.self)
+
+        await XCTAssertThrowsErrorAsync(try await runtime.replaceProtectedApplicationEvent(
+            previousEventID: nil, with: event.id, verificationFrontiers: before
+        )) { error in
+            XCTAssertEqual(error as? GroupRuntimeError, .invalidRecord)
+        }
+        try await runtime.markApplicationPublished(eventID: event.id)
+        var falseFrontier = before[0]
+        falseFrontier = GroupApplicationVerificationFrontierV2(
+            groupID: falseFrontier.groupID,
+            epoch: falseFrontier.epoch,
+            transcriptHash: falseFrontier.transcriptHash,
+            credentialHandle: falseFrontier.credentialHandle,
+            nextCounter: 1,
+            prefixDigest: Data(repeating: 0xa5, count: 32)
+        )
+        await XCTAssertThrowsErrorAsync(try await runtime.replaceProtectedApplicationEvent(
+            previousEventID: nil, with: event.id,
+            verificationFrontiers: [falseFrontier]
+        )) { error in
+            XCTAssertEqual(error as? GroupRuntimeError, .invalidRecord)
+        }
+        try await runtime.replaceProtectedApplicationEvent(
+            previousEventID: nil, with: event.id, verificationFrontiers: before
+        )
+        let reopened = try await NoctweavePQGroupRuntimeV2.open(persistence: store)
+        let saved = await reopened.snapshot()
+        XCTAssertEqual(saved.protectedVerificationFrontiers(for: event.id), before)
+        let forgedCounterState = saved.replacing(
+            applicationVerificationFrontiers: before
+        )
+        XCTAssertFalse(forgedCounterState.isStructurallyValid)
+        XCTAssertThrowsError(try NoctweavePQGroupRuntimeV2(
+            record: forgedCounterState,
+            persistence: TestGroupRuntimeStore(record: forgedCounterState)
+        ))
+        try assertExactRoundTrip(
+            try XCTUnwrap(saved.protectedApplicationVerificationBindings.first),
+            as: GroupProtectedApplicationVerificationBindingV2.self
+        )
+        XCTAssertEqual(saved.applicationVerificationReceipt(for: event.id), receipt)
+        XCTAssertEqual(saved.verificationFrontier(
+            epoch: receipt.epoch, credential: receipt.credentialHandle
+        )?.nextCounter, 1)
+        try assertExactRoundTrip(saved, as: GroupRuntimeRecord.self)
+        try await reopened.removeProtectedApplicationEvent(eventID: event.id)
+        let removed = await reopened.snapshot()
+        XCTAssertNil(removed.protectedVerificationFrontiers(for: event.id))
+    }
+
+    func testReceiptRequiresPersistedFrontierWithCurrentTranscript() throws {
+        let fixture = try makeSignedFixture()
+        let initial = GroupApplicationVerificationFrontierV2.initial(
+            groupID: fixture.record.groupId,
+            epoch: fixture.state.epoch,
+            transcriptHash: fixture.state.confirmedTranscriptHash,
+            credentialHandle: fixture.credential.credentialHandle
+        )
+        let event = GroupConversationEventV2(
+            groupID: fixture.record.groupId,
+            authorMemberHandle: fixture.credential.memberHandle,
+            authorCredentialHandle: fixture.credential.credentialHandle,
+            createdAt: fixture.now,
+            kind: .application,
+            content: try XCTUnwrap(.text("authenticated event"))
+        )
+        let envelopeDigest = bytes(0x8b)
+        let receipt = GroupApplicationVerificationReceiptV2(
+            eventID: event.id,
+            groupID: event.groupID,
+            eventDigest: event.digest,
+            epoch: fixture.state.epoch,
+            transcriptHash: fixture.state.confirmedTranscriptHash,
+            credentialHandle: fixture.credential.credentialHandle,
+            messageCounter: 0,
+            envelopeDigest: envelopeDigest,
+            previousPrefixDigest: initial.prefixDigest,
+            prefixDigest: GroupApplicationVerificationReceiptV2.nextDigest(
+                previous: initial.prefixDigest,
+                eventID: event.id,
+                groupID: event.groupID,
+                epoch: fixture.state.epoch,
+                transcriptHash: fixture.state.confirmedTranscriptHash,
+                credentialHandle: fixture.credential.credentialHandle,
+                messageCounter: 0,
+                envelopeDigest: envelopeDigest,
+                eventDigest: event.digest,
+                outcome: .accepted
+            ),
+            outcome: .accepted
+        )
+        XCTAssertTrue(receipt.isStructurallyValid)
+        let missingFrontier = fixture.record.replacing(
+            events: [event],
+            applicationVerificationReceipts: [receipt],
+            applicationVerificationFrontiers: []
+        )
+        XCTAssertFalse(missingFrontier.isStructurallyValid)
+
+        let foreignTranscript = GroupApplicationVerificationFrontierV2.initial(
+            groupID: fixture.record.groupId,
+            epoch: fixture.state.epoch,
+            transcriptHash: bytes(0x8c),
+            credentialHandle: fixture.credential.credentialHandle
+        )
+        let foreignHead = fixture.record.replacing(
+            applicationVerificationFrontiers: [foreignTranscript]
+        )
+        XCTAssertFalse(foreignHead.isStructurallyValid)
+    }
+
+    func testVerifiedSeriesReplacementIsAtomicAndRetirementSurvivesRestart() async throws {
+        let fixture = try makeSignedFixture()
+        let store = TestGroupRuntimeStore(record: fixture.record)
+        let runtime = try NoctweavePQGroupRuntimeV2(
+            record: fixture.record, persistence: store
+        )
+        func accepted(_ label: String) async throws -> (
+            GroupConversationEventV2, GroupProtectedApplicationVerificationBindingV2
+        ) {
+            let beforeSnapshot = await runtime.snapshot()
+            let before = try XCTUnwrap(beforeSnapshot.currentVerificationFrontiers())
+            let event = GroupConversationEventV2(
+                groupID: fixture.record.groupId,
+                authorMemberHandle: fixture.credential.memberHandle,
+                authorCredentialHandle: fixture.credential.credentialHandle,
+                createdAt: fixture.now,
+                kind: .application,
+                content: try XCTUnwrap(.text(label))
+            )
+            _ = try await runtime.prepareApplicationEvent(event, at: fixture.now)
+            try await runtime.markApplicationPublished(eventID: event.id)
+            return (event, GroupProtectedApplicationVerificationBindingV2(
+                eventID: event.id, frontiers: before
+            ))
+        }
+        let (old, oldBinding) = try await accepted("old owner checkpoint")
+        try await runtime.replaceProtectedApplicationEvent(
+            previousEventID: nil, with: old.id,
+            verificationFrontiers: oldBinding.frontiers
+        )
+        let (fragment, fragmentBinding) = try await accepted("new snapshot fragment")
+        let (anchor, anchorBinding) = try await accepted("new snapshot anchor")
+        try await runtime.replaceProtectedApplicationEvent(
+            previousEventID: nil, with: fragment.id
+        )
+        await XCTAssertThrowsErrorAsync(try await runtime.replaceProtectedApplicationEventSeries(
+            retiring: [fragment.id], with: [anchorBinding]
+        )) { error in
+            XCTAssertEqual(error as? GroupRuntimeError, .invalidRecord)
+        }
+        let falseBinding = GroupProtectedApplicationVerificationBindingV2(
+            eventID: anchor.id,
+            frontiers: [GroupApplicationVerificationFrontierV2(
+                groupID: anchor.groupID,
+                epoch: anchorBinding.frontiers[0].epoch,
+                transcriptHash: anchorBinding.frontiers[0].transcriptHash,
+                credentialHandle: anchorBinding.frontiers[0].credentialHandle,
+                nextCounter: anchorBinding.frontiers[0].nextCounter,
+                prefixDigest: Data(repeating: 0x7a, count: 32)
+            )]
+        )
+        await XCTAssertThrowsErrorAsync(try await runtime.replaceProtectedApplicationEventSeries(
+            retiring: [old.id], with: [fragmentBinding, falseBinding]
+        )) { error in
+            XCTAssertEqual(error as? GroupRuntimeError, .invalidRecord)
+        }
+        await store.failNextSave()
+        await XCTAssertThrowsErrorAsync(try await runtime.replaceProtectedApplicationEventSeries(
+            retiring: [old.id], with: [fragmentBinding, anchorBinding]
+        )) { error in
+            XCTAssertEqual(error as? TestGroupRuntimeStore.StoreError, .injectedFailure)
+        }
+        let afterFailure = await runtime.snapshot()
+        XCTAssertEqual(Set(afterFailure.protectedApplicationEventIDs), [old.id, fragment.id])
+        XCTAssertTrue(afterFailure.retiredProtectedApplicationEventIDs.isEmpty)
+        XCTAssertNil(afterFailure.protectedVerificationFrontiers(for: fragment.id))
+
+        try await runtime.replaceProtectedApplicationEventSeries(
+            retiring: [old.id], with: [fragmentBinding, anchorBinding]
+        )
+        let reopened = try await NoctweavePQGroupRuntimeV2.open(persistence: store)
+        let saved = await reopened.snapshot()
+        XCTAssertEqual(Set(saved.protectedApplicationEventIDs), [fragment.id, anchor.id])
+        XCTAssertEqual(saved.retiredProtectedApplicationEventIDs, [old.id])
+        XCTAssertNil(saved.protectedVerificationFrontiers(for: old.id))
+        XCTAssertEqual(saved.protectedVerificationFrontiers(for: fragment.id),
+                       fragmentBinding.frontiers)
+        XCTAssertEqual(saved.protectedVerificationFrontiers(for: anchor.id),
+                       anchorBinding.frontiers)
+        await XCTAssertThrowsErrorAsync(try await reopened.replaceProtectedApplicationEvent(
+            previousEventID: nil, with: old.id,
+            verificationFrontiers: oldBinding.frontiers
+        )) { error in
+            XCTAssertEqual(error as? GroupRuntimeError, .invalidRecord)
+        }
+        let afterRejectedRepin = await reopened.snapshot()
+        XCTAssertEqual(afterRejectedRepin.protectedApplicationEventIDs,
+                       saved.protectedApplicationEventIDs)
+        try assertExactRoundTrip(saved, as: GroupRuntimeRecord.self)
+        XCTAssertFalse(saved.replacing(
+            retiredProtectedApplicationEventIDs: [old.id, old.id]
+        ).isStructurallyValid)
+
+        let synthetic = try (0..<3_073).map { index in
+            GroupConversationEventV2(
+                groupID: saved.groupId,
+                authorMemberHandle: saved.localCredential.memberHandle,
+                authorCredentialHandle: saved.localCredential.credentialHandle,
+                createdAt: fixture.now.addingTimeInterval(TimeInterval(index + 1)),
+                kind: .application,
+                content: try XCTUnwrap(.text("later history \(index)"))
+            )
+        }
+        let expanded = saved.replacing(events: saved.events + synthetic)
+        XCTAssertTrue(expanded.isStructurallyValid)
+        let compacted = try expanded.compactedDurableState()
+        XCTAssertFalse(compacted.events.contains { $0.id == old.id })
+        XCTAssertTrue(compacted.retiredProtectedApplicationEventIDs.isEmpty)
+        XCTAssertTrue(compacted.events.contains { $0.id == anchor.id })
+    }
+
+    func testVerifiedSeriesReplacementAcceptsAlreadyPinnedSuccessorAcrossEpochs() async throws {
+        let fixture = try makeSignedFixture()
+        let store = TestGroupRuntimeStore(record: fixture.record)
+        let runtime = try NoctweavePQGroupRuntimeV2(
+            record: fixture.record, persistence: store
+        )
+        var checkpointIDs: [UUID] = []
+        var successorBinding: GroupProtectedApplicationVerificationBindingV2?
+        for index in 0..<4 {
+            if index == 3 {
+                let publication = try await runtime.prepareEpoch(
+                    operation: .updateMetadata,
+                    proposedMembers: fixture.state.members,
+                    proposedCredentials: fixture.state.memberCredentials,
+                    proposedPermissions: fixture.state.permissions,
+                    proposedMetadataDigest: bytes(0xe1),
+                    idempotencyKey: bytes(0xe2),
+                    createdAt: fixture.now.addingTimeInterval(1)
+                )
+                try await runtime.markFanoutStored(
+                    intentId: publication.intentId,
+                    destinationCredentialHandle: fixture.credential.credentialHandle,
+                    at: fixture.now.addingTimeInterval(2)
+                )
+                try await runtime.finalizeEpoch(
+                    intentId: publication.intentId,
+                    at: fixture.now.addingTimeInterval(3)
+                )
+            }
+            let snapshot = await runtime.snapshot()
+            let before = try XCTUnwrap(snapshot.currentVerificationFrontiers())
+            let event = GroupConversationEventV2(
+                groupID: fixture.record.groupId,
+                authorMemberHandle: fixture.credential.memberHandle,
+                authorCredentialHandle: fixture.credential.credentialHandle,
+                createdAt: fixture.now.addingTimeInterval(index == 3 ? 4 : 0),
+                kind: .application,
+                content: try XCTUnwrap(.text("checkpoint \(index)"))
+            )
+            _ = try await runtime.prepareApplicationEvent(
+                event, at: event.createdAt
+            )
+            try await runtime.markApplicationPublished(eventID: event.id)
+            try await runtime.replaceProtectedApplicationEvent(
+                previousEventID: nil, with: event.id,
+                verificationFrontiers: before
+            )
+            checkpointIDs.append(event.id)
+            if index == 3 {
+                successorBinding = GroupProtectedApplicationVerificationBindingV2(
+                    eventID: event.id, frontiers: before
+                )
+            }
+        }
+        let alreadyPinned = try XCTUnwrap(successorBinding)
+        try await runtime.replaceProtectedApplicationEventSeries(
+            retiring: Array(checkpointIDs.prefix(3)), with: [alreadyPinned]
+        )
+        let saved = await runtime.snapshot()
+        XCTAssertEqual(saved.protectedApplicationEventIDs, [alreadyPinned.eventID])
+        XCTAssertEqual(Set(saved.retiredProtectedApplicationEventIDs),
+                       Set(checkpointIDs.prefix(3)))
+        XCTAssertEqual(saved.protectedVerificationFrontiers(for: alreadyPinned.eventID),
+                       alreadyPinned.frontiers)
+        XCTAssertTrue(saved.isStructurallyValid)
+        let reopened = try await NoctweavePQGroupRuntimeV2.open(persistence: store)
+        let reopenedSnapshot = await reopened.snapshot()
+        XCTAssertEqual(reopenedSnapshot.protectedApplicationEventIDs, [alreadyPinned.eventID])
+    }
+
+    func testSameCounterForkCannotMatchOwnerVerifiedCheckpointBinding() async throws {
+        let fixture = try await makeTwoMemberRuntimeFixture()
+        let ownerBase = await fixture.owner.snapshot()
+        let memberBase = await fixture.member.snapshot()
+        let receiverA = try NoctweavePQGroupRuntimeV2(
+            record: ownerBase, persistence: TestGroupRuntimeStore(record: ownerBase)
+        )
+        let receiverB = try NoctweavePQGroupRuntimeV2(
+            record: ownerBase, persistence: TestGroupRuntimeStore(record: ownerBase)
+        )
+        let provider = NoctweavePQGroupExperimentalProviderV2()
+        func memberEvent(_ text: String) throws -> GroupConversationEventV2 {
+            GroupConversationEventV2(
+                groupID: ownerBase.groupId,
+                authorMemberHandle: fixture.memberCredential.memberHandle,
+                authorCredentialHandle: fixture.memberCredential.credentialHandle,
+                createdAt: fixture.now,
+                kind: .application,
+                content: try XCTUnwrap(.text(text))
+            )
+        }
+        let eventA = try memberEvent("fork A")
+        let eventB = try memberEvent("fork B")
+        let envelopeA = try provider.encryptApplicationEvent(
+            NoctweaveCoder.encode(eventA, sortedKeys: true),
+            state: memberBase.cryptoState, signedState: memberBase.signedState,
+            localCredential: fixture.memberCredential,
+            eventId: eventA.id, sentAt: fixture.now
+        ).envelope
+        let envelopeB = try provider.encryptApplicationEvent(
+            NoctweaveCoder.encode(eventB, sortedKeys: true),
+            state: memberBase.cryptoState, signedState: memberBase.signedState,
+            localCredential: fixture.memberCredential,
+            eventId: eventB.id, sentAt: fixture.now
+        ).envelope
+        XCTAssertEqual(envelopeA.messageCounter, envelopeB.messageCounter)
+        _ = try await receiverA.processApplicationEnvelope(envelopeA, at: fixture.now)
+        _ = try await receiverB.processApplicationEnvelope(envelopeB, at: fixture.now)
+        let stateA = await receiverA.snapshot()
+        let headsA = try XCTUnwrap(stateA.currentVerificationFrontiers())
+        let stateB = await receiverB.snapshot()
+        let headsB = try XCTUnwrap(stateB.currentVerificationFrontiers())
+        XCTAssertNotEqual(headsA, headsB)
+
+        let checkpoint = GroupConversationEventV2(
+            groupID: ownerBase.groupId,
+            authorMemberHandle: ownerBase.localCredential.memberHandle,
+            authorCredentialHandle: ownerBase.localCredential.credentialHandle,
+            createdAt: fixture.now.addingTimeInterval(1), kind: .application,
+            content: try XCTUnwrap(.text("checkpoint for A"))
+        )
+        let checkpointEnvelope = try provider.encryptApplicationEvent(
+            NoctweaveCoder.encode(checkpoint, sortedKeys: true),
+            state: stateA.cryptoState, signedState: stateA.signedState,
+            localCredential: stateA.localCredential,
+            eventId: checkpoint.id, sentAt: fixture.now.addingTimeInterval(1)
+        ).envelope
+        _ = try await receiverA.processApplicationEnvelope(
+            checkpointEnvelope, at: fixture.now.addingTimeInterval(1)
+        )
+        _ = try await receiverB.processApplicationEnvelope(
+            checkpointEnvelope, at: fixture.now.addingTimeInterval(1)
+        )
+        try await receiverA.replaceProtectedApplicationEvent(
+            previousEventID: nil, with: checkpoint.id,
+            verificationFrontiers: headsA
+        )
+        await XCTAssertThrowsErrorAsync(try await receiverB.replaceProtectedApplicationEvent(
+            previousEventID: nil, with: checkpoint.id,
+            verificationFrontiers: headsA
+        )) { error in
+            XCTAssertEqual(error as? GroupRuntimeError, .invalidRecord)
+        }
+        let rejected = await receiverB.snapshot()
+        XCTAssertNil(rejected.protectedVerificationFrontiers(for: checkpoint.id))
+    }
+
+    func testNewEpochCheckpointBindsConsumedRejectedMemberCounter() async throws {
+        let fixture = try await makeTwoMemberRuntimeFixture()
+        let owner = fixture.owner
+        let memberBase = await fixture.member.snapshot()
+        let ownerBase = await owner.snapshot()
+        XCTAssertEqual(ownerBase.signedState.epoch, 2)
+        let provider = NoctweavePQGroupExperimentalProviderV2()
+        let poison = GroupConversationEventV2(
+            groupID: ownerBase.groupId,
+            authorMemberHandle: .generate(),
+            authorCredentialHandle: fixture.memberCredential.credentialHandle,
+            createdAt: fixture.now.addingTimeInterval(2),
+            kind: .application,
+            content: try XCTUnwrap(.text("bad author in new epoch"))
+        )
+        let poisonEnvelope = try provider.encryptApplicationEvent(
+            NoctweaveCoder.encode(poison, sortedKeys: true),
+            state: memberBase.cryptoState, signedState: memberBase.signedState,
+            localCredential: fixture.memberCredential,
+            eventId: poison.id, sentAt: fixture.now.addingTimeInterval(2)
+        ).envelope
+        await XCTAssertThrowsErrorAsync(try await owner.processApplicationEnvelope(
+            poisonEnvelope, at: fixture.now.addingTimeInterval(2)
+        )) { error in
+            XCTAssertEqual(error as? GroupRuntimeError, .conflictingApplicationEnvelope)
+        }
+        let rejectedState = await owner.snapshot()
+        let rejectedReceipt = try XCTUnwrap(
+            rejectedState.applicationVerificationReceipt(for: poison.id)
+        )
+        XCTAssertEqual(rejectedReceipt.outcome, .rejectedConflictingEnvelope)
+        let frontiers = try XCTUnwrap(rejectedState.currentVerificationFrontiers())
+        let memberHead = try XCTUnwrap(frontiers.first {
+            $0.credentialHandle == fixture.memberCredential.credentialHandle
+        })
+        XCTAssertEqual(memberHead.nextCounter, 1)
+        XCTAssertEqual(memberHead.prefixDigest, rejectedReceipt.prefixDigest)
+
+        let checkpoint = GroupConversationEventV2(
+            groupID: ownerBase.groupId,
+            authorMemberHandle: ownerBase.localCredential.memberHandle,
+            authorCredentialHandle: ownerBase.localCredential.credentialHandle,
+            createdAt: fixture.now.addingTimeInterval(3),
+            kind: .application,
+            content: try XCTUnwrap(.text("new epoch policy checkpoint"))
+        )
+        let checkpointEnvelope = try provider.encryptApplicationEvent(
+            NoctweaveCoder.encode(checkpoint, sortedKeys: true),
+            state: rejectedState.cryptoState,
+            signedState: rejectedState.signedState,
+            localCredential: rejectedState.localCredential,
+            eventId: checkpoint.id,
+            sentAt: fixture.now.addingTimeInterval(3)
+        ).envelope
+        _ = try await owner.processApplicationEnvelope(
+            checkpointEnvelope, at: fixture.now.addingTimeInterval(3)
+        )
+        try await owner.replaceProtectedApplicationEvent(
+            previousEventID: nil, with: checkpoint.id,
+            verificationFrontiers: frontiers
+        )
+        let bound = await owner.snapshot()
+        XCTAssertEqual(bound.protectedVerificationFrontiers(for: checkpoint.id), frontiers)
+    }
+
+    func testVerificationFrontiersAreScopedToEpochAndSurviveRotation() async throws {
+        let fixture = try makeSignedFixture()
+        let store = TestGroupRuntimeStore(record: fixture.record)
+        let runtime = try NoctweavePQGroupRuntimeV2(
+            record: fixture.record, persistence: store
+        )
+        let first = GroupConversationEventV2(
+            groupID: fixture.record.groupId,
+            authorMemberHandle: fixture.credential.memberHandle,
+            authorCredentialHandle: fixture.credential.credentialHandle,
+            createdAt: fixture.now, kind: .application,
+            content: try XCTUnwrap(.text("before rotation"))
+        )
+        _ = try await runtime.prepareApplicationEvent(first, at: fixture.now)
+        try await runtime.markApplicationPublished(eventID: first.id)
+        let beforeRotation = await runtime.snapshot()
+        let oldHead = try XCTUnwrap(beforeRotation.verificationFrontier(
+            epoch: 1, credential: fixture.credential.credentialHandle
+        ))
+        XCTAssertEqual(oldHead.nextCounter, 1)
+
+        let publication = try await runtime.prepareEpoch(
+            operation: .updateMetadata,
+            proposedMembers: fixture.state.members,
+            proposedCredentials: fixture.state.memberCredentials,
+            proposedPermissions: fixture.state.permissions,
+            proposedMetadataDigest: bytes(0xe1),
+            idempotencyKey: bytes(0xe2),
+            createdAt: fixture.now.addingTimeInterval(1)
+        )
+        try await runtime.markFanoutStored(
+            intentId: publication.intentId,
+            destinationCredentialHandle: fixture.credential.credentialHandle,
+            at: fixture.now.addingTimeInterval(2)
+        )
+        try await runtime.finalizeEpoch(
+            intentId: publication.intentId,
+            at: fixture.now.addingTimeInterval(3)
+        )
+        let rotated = await runtime.snapshot()
+        XCTAssertEqual(rotated.signedState.epoch, 2)
+        XCTAssertEqual(rotated.verificationFrontier(
+            epoch: 1, credential: fixture.credential.credentialHandle
+        ), oldHead)
+        let noOldHistory = rotated.replacing(
+            events: [], applicationVerificationReceipts: []
+        )
+        let retired = try noOldHistory.compactedDurableState()
+        XCTAssertNil(retired.verificationFrontier(
+            epoch: 1, credential: fixture.credential.credentialHandle
+        ))
+        let fresh = try XCTUnwrap(rotated.verificationFrontier(
+            epoch: 2, credential: fixture.credential.credentialHandle
+        ))
+        XCTAssertEqual(fresh.nextCounter, 0)
+        XCTAssertNotEqual(fresh.prefixDigest, oldHead.prefixDigest)
+
+        let second = GroupConversationEventV2(
+            groupID: fixture.record.groupId,
+            authorMemberHandle: fixture.credential.memberHandle,
+            authorCredentialHandle: fixture.credential.credentialHandle,
+            createdAt: fixture.now.addingTimeInterval(4), kind: .application,
+            content: try XCTUnwrap(.text("after rotation"))
+        )
+        _ = try await runtime.prepareApplicationEvent(
+            second, at: fixture.now.addingTimeInterval(4)
+        )
+        let after = await runtime.snapshot()
+        XCTAssertEqual(after.applicationVerificationReceipt(for: second.id)?.messageCounter, 0)
+        XCTAssertEqual(after.applicationVerificationReceipt(for: second.id)?.epoch, 2)
+        XCTAssertEqual(after.applicationVerificationReceipt(for: second.id)?.previousPrefixDigest,
+                       fresh.prefixDigest)
+        let reopened = try await NoctweavePQGroupRuntimeV2.open(persistence: store)
+        let restored = await reopened.snapshot()
+        XCTAssertEqual(restored.verificationFrontier(
+            epoch: 1, credential: fixture.credential.credentialHandle
+        ), oldHead)
+        XCTAssertEqual(restored.applicationVerificationReceipt(for: second.id),
+                       after.applicationVerificationReceipt(for: second.id))
+    }
+
+    func testCompactionKeepsProtectedEventReceiptAndFrontierBinding() async throws {
+        XCTAssertGreaterThanOrEqual(
+            GroupRuntimeRecord.maximumApplicationVerificationFrontiers,
+            GroupRuntimeRecord.maximumApplicationVerificationReceipts
+                + GroupRuntimeRecord.maximumProtectedApplicationEvents * 256
+                + NoctweaveGroupArchitectureV2.maximumActiveExperimentalCredentials
+        )
+        let fixture = try makeSignedFixture()
+        let runtime = try NoctweavePQGroupRuntimeV2(
+            record: fixture.record,
+            persistence: TestGroupRuntimeStore(record: fixture.record)
+        )
+        let before = try XCTUnwrap(
+            fixture.record.currentVerificationFrontiers()
+        )
+        let checkpoint = GroupConversationEventV2(
+            groupID: fixture.record.groupId,
+            authorMemberHandle: fixture.credential.memberHandle,
+            authorCredentialHandle: fixture.credential.credentialHandle,
+            createdAt: fixture.now, kind: .application,
+            content: try XCTUnwrap(.text("retained checkpoint"))
+        )
+        _ = try await runtime.prepareApplicationEvent(checkpoint, at: fixture.now)
+        try await runtime.markApplicationPublished(eventID: checkpoint.id)
+        try await runtime.replaceProtectedApplicationEvent(
+            previousEventID: nil, with: checkpoint.id,
+            verificationFrontiers: before
+        )
+        let pinned = await runtime.snapshot()
+        let synthetic = try (0..<3_073).map { index in
+            GroupConversationEventV2(
+                groupID: pinned.groupId,
+                authorMemberHandle: pinned.localCredential.memberHandle,
+                authorCredentialHandle: pinned.localCredential.credentialHandle,
+                createdAt: fixture.now.addingTimeInterval(TimeInterval(index + 1)),
+                kind: .application,
+                content: try XCTUnwrap(.text("history \(index)"))
+            )
+        }
+        let expanded = pinned.replacing(events: [checkpoint] + synthetic)
+        XCTAssertTrue(expanded.isStructurallyValid)
+        let compacted = try expanded.compactedDurableState()
+        XCTAssertTrue(compacted.events.contains { $0.id == checkpoint.id })
+        XCTAssertFalse(compacted.events.contains { $0.id == synthetic[0].id })
+        XCTAssertEqual(compacted.applicationVerificationReceipt(for: checkpoint.id),
+                       pinned.applicationVerificationReceipt(for: checkpoint.id))
+        XCTAssertEqual(compacted.protectedVerificationFrontiers(for: checkpoint.id), before)
+        try assertExactRoundTrip(compacted, as: GroupRuntimeRecord.self)
+    }
+
+    func testVersionFiveRuntimeMigratesWithoutRelaxingExactKeys() throws {
+        let fixture = try makeSignedFixture()
+        let encoded = try NoctweaveCoder.encode(fixture.record, sortedKeys: true)
+        var object = try XCTUnwrap(JSONSerialization.jsonObject(with: encoded) as? [String: Any])
+        object["formatVersion"] = 5
+        object.removeValue(forKey: "protectedApplicationEventIDs")
+        object.removeValue(forKey: "retiredProtectedApplicationEventIDs")
+        object.removeValue(forKey: "applicationVerificationLegacyThroughEpoch")
+        object.removeValue(forKey: "applicationVerificationReceipts")
+        object.removeValue(forKey: "applicationVerificationFrontiers")
+        object.removeValue(forKey: "protectedApplicationVerificationBindings")
+        let legacyBytes = try JSONSerialization.data(withJSONObject: object, options: [.sortedKeys])
+        let migrated = try NoctweaveCoder.decode(GroupRuntimeRecord.self, from: legacyBytes)
+        XCTAssertEqual(migrated.formatVersion, GroupRuntimeRecord.version)
+        XCTAssertTrue(migrated.protectedApplicationEventIDs.isEmpty)
+        XCTAssertTrue(migrated.retiredProtectedApplicationEventIDs.isEmpty)
+        XCTAssertEqual(migrated.applicationVerificationLegacyThroughEpoch,
+                       fixture.record.signedState.epoch)
+        XCTAssertTrue(migrated.applicationVerificationReceipts.isEmpty)
+        XCTAssertNil(migrated.currentVerificationFrontiers())
+        XCTAssertTrue(migrated.isStructurallyValid)
+        try assertExactRoundTrip(migrated, as: GroupRuntimeRecord.self)
+
+        object["protectedApplicationEventIDs"] = []
+        let extraLegacyField = try JSONSerialization.data(withJSONObject: object, options: [.sortedKeys])
+        XCTAssertThrowsError(try NoctweaveCoder.decode(GroupRuntimeRecord.self, from: extraLegacyField))
+        object["formatVersion"] = GroupRuntimeRecord.version
+        object.removeValue(forKey: "protectedApplicationEventIDs")
+        let missingCurrentField = try JSONSerialization.data(withJSONObject: object, options: [.sortedKeys])
+        XCTAssertThrowsError(try NoctweaveCoder.decode(GroupRuntimeRecord.self, from: missingCurrentField))
+
+        var priorV6 = try XCTUnwrap(JSONSerialization.jsonObject(
+            with: encoded
+        ) as? [String: Any])
+        priorV6.removeValue(forKey: "retiredProtectedApplicationEventIDs")
+        let priorV6Bytes = try JSONSerialization.data(
+            withJSONObject: priorV6, options: [.sortedKeys]
+        )
+        let migratedV6 = try NoctweaveCoder.decode(
+            GroupRuntimeRecord.self, from: priorV6Bytes
+        )
+        XCTAssertTrue(migratedV6.retiredProtectedApplicationEventIDs.isEmpty)
+        try assertExactRoundTrip(migratedV6, as: GroupRuntimeRecord.self)
     }
 
     func testProvisionalStateIsNominalAndApplicationRatchetsRejectReplayAndGaps() throws {

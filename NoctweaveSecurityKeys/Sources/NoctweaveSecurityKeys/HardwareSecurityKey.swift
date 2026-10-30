@@ -12,6 +12,7 @@ public enum SecurityKeyTransport: String, CaseIterable, Sendable, Identifiable {
 
 /// A short-lived CTAP2 session. Authentication is local and always requires UP and UV.
 public actor HardwareSecurityKey {
+    private static let loggingConfigured: Void = { Logs.configure(logLevel: .warning) }()
     private var active = false
     private var generation: UInt64 = 0
     private var connection: (any Connection)?
@@ -20,6 +21,7 @@ public actor HardwareSecurityKey {
 
     /// Apps can prohibit a transport before any connection or system prompt opens.
     public init(allowedTransports: Set<SecurityKeyTransport> = [.usb, .nfc]) {
+        _ = Self.loggingConfigured
         self.allowedTransports = allowedTransports
     }
 

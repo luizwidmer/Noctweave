@@ -118,6 +118,114 @@ final class PersonaScopeFreshnessTests: XCTestCase {
         XCTAssertTrue(persona.isStructurallyValid)
     }
 
+    func testOuterCodecsStillRejectInvalidNestedAuthority() throws {
+        let relationship = try makeRelationship()
+        let runtime = try makeGroupRuntime()
+        let pending = try PendingGroupAdmissionV2.prepare(
+            groupID: UUID(),
+            invitationBindingDigest: Data(repeating: 0x31, count: 32),
+            relay: RelayEndpoint(
+                host: "relay.example", port: 443,
+                useTLS: true, transport: .websocket
+            ),
+            expiresAt: origin.addingTimeInterval(3_600),
+            createdAt: origin
+        )
+        var state = try ClientState(displayName: "Local", createdAt: origin)
+        try state.updateActivePersona { persona in
+            try persona.upsert(relationship: relationship)
+            try persona.upsert(groupRuntime: runtime)
+            try persona.insert(pendingGroupAdmission: pending)
+        }
+        let persona = state.activePersona
+        let encodedState = try NoctweaveCoder.encode(state, sortedKeys: true)
+        let encodedPersona = try NoctweaveCoder.encode(persona, sortedKeys: true)
+
+        var invalidRuntimePersona = persona
+        invalidRuntimePersona.groupRuntimes[0] = runtime.replacing(
+            events: [GroupConversationEventV2(
+                groupID: UUID(),
+                authorMemberHandle: runtime.localCredential.memberHandle,
+                authorCredentialHandle: runtime.localCredential.credentialHandle,
+                createdAt: origin,
+                kind: .application,
+                content: try XCTUnwrap(.text("wrong group"))
+            )]
+        )
+        XCTAssertFalse(invalidRuntimePersona.groupRuntimes[0].isStructurallyValid)
+        XCTAssertThrowsError(try NoctweaveCoder.encode(
+            invalidRuntimePersona, sortedKeys: true
+        ))
+        var invalidRuntimeState = state
+        invalidRuntimeState.personas[0] = invalidRuntimePersona
+        XCTAssertThrowsError(try NoctweaveCoder.encode(
+            invalidRuntimeState, sortedKeys: true
+        ))
+
+        var invalidRelationshipPersona = persona
+        var invalidRelationship = relationship
+        invalidRelationship.localIdentity = try makeRelationship().localIdentity
+        XCTAssertFalse(invalidRelationship.isStructurallyValid)
+        invalidRelationshipPersona.relationships[0] = invalidRelationship
+        XCTAssertThrowsError(try NoctweaveCoder.encode(
+            invalidRelationshipPersona, sortedKeys: true
+        ))
+        var invalidRelationshipState = state
+        invalidRelationshipState.personas[0] = invalidRelationshipPersona
+        XCTAssertThrowsError(try NoctweaveCoder.encode(
+            invalidRelationshipState, sortedKeys: true
+        ))
+
+        func corruptNested(
+            _ data: Data,
+            section: String,
+            field: String,
+            value: Any,
+            isState: Bool
+        ) throws -> Data {
+            var root = try XCTUnwrap(
+                JSONSerialization.jsonObject(with: data) as? [String: Any]
+            )
+            var target = root
+            var personas: [[String: Any]] = []
+            if isState {
+                personas = try XCTUnwrap(root["personas"] as? [[String: Any]])
+                target = personas[0]
+            }
+            var records = try XCTUnwrap(target[section] as? [[String: Any]])
+            records[0][field] = value
+            target[section] = records
+            if isState {
+                personas[0] = target
+                root["personas"] = personas
+            } else {
+                root = target
+            }
+            return try JSONSerialization.data(withJSONObject: root)
+        }
+        let corruptions: [(String, String, Any)] = [
+            ("groupRuntimes", "groupId", UUID().uuidString),
+            ("relationships", "version", -1),
+            ("pendingGroupAdmissions", "invitationBindingDigest", "AA=="),
+        ]
+        for (section, field, value) in corruptions {
+            let brokenPersona = try corruptNested(
+                encodedPersona, section: section, field: field,
+                value: value, isState: false
+            )
+            XCTAssertThrowsError(try NoctweaveCoder.decode(
+                PersonaProfileV1.self, from: brokenPersona
+            ), "Persona accepted invalid \(section)")
+            let brokenState = try corruptNested(
+                encodedState, section: section, field: field,
+                value: value, isState: true
+            )
+            XCTAssertThrowsError(try NoctweaveCoder.decode(
+                ClientState.self, from: brokenState
+            ), "Client state accepted invalid \(section)")
+        }
+    }
+
     private func makeGroupRuntime(
         groupId: UUID = UUID(),
         memberHandle: GroupScopedMemberHandleV2 = .generate(),

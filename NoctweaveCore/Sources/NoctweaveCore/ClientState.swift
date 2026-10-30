@@ -436,8 +436,10 @@ public struct ClientState: Codable, Equatable {
         hasCompletedOnboarding = try container.decode(Bool.self, forKey: .hasCompletedOnboarding)
         hasAcceptedPrivacyPolicy = try container.decode(Bool.self, forKey: .hasAcceptedPrivacyPolicy)
         hasAcceptedTermsOfUse = try container.decode(Bool.self, forKey: .hasAcceptedTermsOfUse)
+        // Persona decoders validate their nested authority and runtime
+        // records; only cross-persona and local-setting rules remain here.
         try requireValidClientStateDecoding(
-            try isStructurallyValidThrowing,
+            hasValidAggregateStructureAfterPersonaPreflight,
             key: .personas,
             container: container,
             description: "Invalid client state"
@@ -445,8 +447,9 @@ public struct ClientState: Codable, Equatable {
     }
 
     public func encode(to encoder: Encoder) throws {
+        // Persona encoders validate each nested record during encoding.
         try requireValidClientStateEncoding(
-            try isStructurallyValidThrowing,
+            hasValidAggregateStructureAfterPersonaPreflight,
             value: self,
             encoder: encoder,
             description: "Invalid client state"

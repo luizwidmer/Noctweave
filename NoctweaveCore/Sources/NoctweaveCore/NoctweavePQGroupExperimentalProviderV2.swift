@@ -1019,6 +1019,23 @@ public struct NoctweavePQGroupExperimentalProviderV2 {
         return localState
     }
 
+    /// Internal consistency check for durable application-verification heads.
+    /// The public group runtime exposes authenticated receipts, never ratchet
+    /// keys or this provider's opaque sender-chain state.
+    func applicationCounterPositions(
+        state: GroupCryptoState,
+        signedState: SignedGroupStateV2
+    ) throws -> [(credential: GroupScopedCredentialHandleV2, nextCounter: UInt64)] {
+        let localState = try requireActiveState(state)
+        try validateSignedBinding(localState, signedState: signedState)
+        return localState.senderChains.map { chain in
+            (credential: chain.credentialHandle,
+             nextCounter: chain.credentialHandle == localState.localCredentialHandle
+                ? max(chain.nextSendCounter, chain.nextReceiveCounter)
+                : chain.nextReceiveCounter)
+        }
+    }
+
     private func encodeState(_ localState: PQGroupLocalCryptoStateV2) throws -> GroupCryptoState {
         guard localState.isStructurallyValid else {
             throw NoctweavePQGroupExperimentalErrorV2.invalidState

@@ -205,12 +205,26 @@ final class EndpointPrekeyRotationTests: XCTestCase {
 
     func testBindingSchemaContainsNoEndpointSetOrDeviceLifecycleState() throws {
         let fixture = try endpointFixture(pseudonym: "Relationship-only", prekeyIssuedAt: Date())
-        let text = try XCTUnwrap(String(
-            data: NoctweaveCoder.encode(fixture.binding, sortedKeys: true),
-            encoding: .utf8
+        let encoded = try XCTUnwrap(NoctweaveCoder.encode(
+            fixture.binding,
+            sortedKeys: true
         ))
+        let value = try JSONSerialization.jsonObject(with: encoded)
+        func fieldNames(in value: Any) -> [String] {
+            if let object = value as? [String: Any] {
+                return object.flatMap { key, child in
+                    [key] + fieldNames(in: child)
+                }
+            }
+            if let array = value as? [Any] {
+                return array.flatMap { fieldNames(in: $0) }
+            }
+            return []
+        }
+        let names = fieldNames(in: value).map { $0.lowercased() }
+        XCTAssertFalse(names.isEmpty)
         for forbidden in ["manifest", "checkpoint", "epoch", "device", "installation", "revok"] {
-            XCTAssertFalse(text.lowercased().contains(forbidden))
+            XCTAssertFalse(names.contains { $0.contains(forbidden) })
         }
     }
 }

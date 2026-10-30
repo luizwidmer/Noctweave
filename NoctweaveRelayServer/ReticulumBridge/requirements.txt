@@ -1,6 +1,6 @@
 cffi==2.1.1
-cryptography==50.0.0
-msgpack==1.2.1
-pycparser==3.0
+cryptography==50.0.2
+msgpack==1.2.4
+pycparser==3.12
 pyserial==3.5
-rns==1.4.2
+rns==1.5.7

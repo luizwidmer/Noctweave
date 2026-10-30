@@ -84,11 +84,19 @@ bun run desktop:prepare
 bun run desktop:dev
 ```
 
-The launcher pins Electrobun 2.0.2 and keeps its Bun main process. Preparation
-verifies the paired build tools and projects SDK aliases into the ignored
+The launcher pins Electrobun 2.0.5 and keeps its Bun main process. Source
+builds and release checks require Bun 1.4.4 or newer, including its fixes for
+the bundled Brotli decoder and TLS trust store. The prepare, build, dev, and
+watch entrypoints reject an older host Bun before starting Electrobun; the
+`engines.bun` declaration alone is not an execution gate. Preparation uses the ignored,
+owner-only `.local/hutch-store` toolchain cache, verifies the paired build tools,
+and projects SDK aliases into the ignored
 `.hutch/devkit` directory; the TypeScript 7 configuration clears the generated
 SDK's legacy `baseUrl`. Run `bun run desktop:test`, `bun run typecheck:desktop`
 and `bun run desktop:build` for regression, type and fresh artifact checks.
+On Windows, the cache is placed under `%LOCALAPPDATA%/NoctweaveRelayServer/hutch-store`;
+the launcher requires an absolute `LOCALAPPDATA` path, but does not inspect
+Windows ACLs. Keep that directory private to the local user.
 After preparation, `DASH_RELEASE_OFFLINE=1 bun run desktop:build` requires the
 cached tools. The archive checks require `tar` with Zstd support. Existing
 macOS signing/notarization settings remain disabled, so local packages are not

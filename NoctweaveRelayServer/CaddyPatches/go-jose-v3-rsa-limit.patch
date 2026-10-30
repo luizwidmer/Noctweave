@@ -1,0 +1,267 @@
+--- a/jwk.go
++++ b/jwk.go
+@@ -175,11 +175,23 @@
+ }
+ 
+ // UnmarshalJSON reads a key from its JSON representation.
+-func (k *JSONWebKey) UnmarshalJSON(data []byte) (err error) {
++// Directly unmarshaling a JWK is not safe for untrusted input.
++func (k *JSONWebKey) UnmarshalJSON(data []byte) error {
++	return k.unmarshalJSON(data, true)
++}
++
++// unmarshalJSON reads a key from its JSON representation. Public headers must
++// reject private parameters before key validation or certificate parsing.
++func (k *JSONWebKey) unmarshalJSON(data []byte, allowPrivate bool) (err error) {
+ 	var raw rawJSONWebKey
+ 	err = json.Unmarshal(data, &raw)
+ 	if err != nil {
+ 		return err
++	}
++	if !allowPrivate &&
++		(raw.K != nil || raw.D != nil || raw.P != nil || raw.Q != nil ||
++			raw.Dp != nil || raw.Dq != nil || raw.Qi != nil) {
++		return errors.New("go-jose/go-jose: JWK contains private parameters")
+ 	}
+ 
+ 	certs, err := parseCertificateChain(raw.X5c)
+@@ -481,13 +493,22 @@
+ 	return true
+ }
+ 
++// MaxRSAModulusBits is the largest RSA modulus accepted when parsing a JWK.
++// Change it before parsing if an application requires larger RSA keys.
++var MaxRSAModulusBits = 4096
++
+ func (key rawJSONWebKey) rsaPublicKey() (*rsa.PublicKey, error) {
+ 	if key.N == nil || key.E == nil {
+ 		return nil, fmt.Errorf("go-jose/go-jose: invalid RSA key, missing n/e values")
+ 	}
+ 
++	n := key.N.bigInt()
++	if n.BitLen() > MaxRSAModulusBits {
++		return nil, fmt.Errorf("go-jose/go-jose: invalid RSA key, modulus too large")
++	}
++
+ 	return &rsa.PublicKey{
+-		N: key.N.bigInt(),
++		N: n,
+ 		E: key.E.toInt(),
+ 	}, nil
+ }
+@@ -628,15 +649,24 @@
+ 		return nil, fmt.Errorf("go-jose/go-jose: invalid RSA private key, missing %s value(s)", strings.Join(missing, ", "))
+ 	}
+ 
++	n := key.N.bigInt()
++	if n.BitLen() > MaxRSAModulusBits {
++		return nil, fmt.Errorf("go-jose/go-jose: invalid RSA key, modulus too large")
++	}
++	p, q := key.P.bigInt(), key.Q.bigInt()
++	if p.BitLen()+q.BitLen() > n.BitLen()+1 || new(big.Int).Mul(p, q).Cmp(n) != 0 {
++		return nil, fmt.Errorf("go-jose/go-jose: invalid RSA private key, p * q != n")
++	}
++
+ 	rv := &rsa.PrivateKey{
+ 		PublicKey: rsa.PublicKey{
+-			N: key.N.bigInt(),
++			N: n,
+ 			E: key.E.toInt(),
+ 		},
+ 		D: key.D.bigInt(),
+ 		Primes: []*big.Int{
+-			key.P.bigInt(),
+-			key.Q.bigInt(),
++			p,
++			q,
+ 		},
+ 	}
+ 
+--- a/shared.go
++++ b/shared.go
+@@ -282,9 +282,10 @@
+ 	if v == nil {
+ 		return nil, nil
+ 	}
+-	var epk *JSONWebKey
+-	err := json.Unmarshal(*v, &epk)
+-	if err != nil {
++	// The EPK header represents an ephemeral public key. Reject private key
++	// material before parsing it.
++	epk := new(JSONWebKey)
++	if err := epk.unmarshalJSON(*v, false); err != nil {
+ 		return nil, err
+ 	}
+ 	return epk, nil
+@@ -322,6 +323,22 @@
+ 		return nil, err
+ 	}
+ 	return jwk, nil
++}
++
++// validatePublicKeyHeaders checks each raw header independently, including
++// fields that another header would otherwise shadow during merging.
++func (parsed rawHeader) validatePublicKeyHeaders() error {
++	for _, key := range []HeaderKey{headerJWK, headerEPK} {
++		value := parsed[key]
++		if value == nil {
++			continue
++		}
++		jwk := new(JSONWebKey)
++		if err := jwk.unmarshalJSON(*value, false); err != nil {
++			return fmt.Errorf("go-jose/go-jose: invalid %s header: %w", key, err)
++		}
++	}
++	return nil
+ }
+ 
+ // getCritical extracts parsed "crit" from the raw JSON. If omitted, it
+@@ -383,10 +400,12 @@
+ 		}
+ 		switch k {
+ 		case headerJWK:
+-			var jwk *JSONWebKey
+-			err = json.Unmarshal(*v, &jwk)
+-			if err != nil {
+-				err = fmt.Errorf("failed to unmarshal JWK: %v: %#v", err, string(*v))
++			// Embedded JWK headers carry public keys. Reject private material
++			// before RSA validation or certificate parsing.
++			jwk := new(JSONWebKey)
++			err = jwk.unmarshalJSON(*v, false)
++			if err != nil {
++				err = fmt.Errorf("failed to unmarshal JWK: %w", err)
+ 				return
+ 			}
+ 			h.JSONWebKey = jwk
+--- a/jws.go
++++ b/jws.go
+@@ -234,6 +234,7 @@
+ 		if sig.Header != nil && sig.Header.getNonce() != "" {
+ 			return nil, ErrUnprotectedNonce
+ 		}
++		obj.Signatures[i].header = sig.Header
+ 
+ 		var err error
+ 		obj.Signatures[i].Header, err = obj.Signatures[i].mergedHeaders().sanitized()
+@@ -266,7 +267,6 @@
+ 		// Copy value of sig
+ 		original := sig
+ 
+-		obj.Signatures[i].header = sig.Header
+ 		obj.Signatures[i].original = &original
+ 	}
+ 
+--- a/jwe.go
++++ b/jwe.go
+@@ -151,15 +151,6 @@
+ 		}
+ 	}
+ 
+-	// Note: this must be called _after_ we parse the protected header,
+-	// otherwise fields from the protected header will not get picked up.
+-	var err error
+-	mergedHeaders := obj.mergedHeaders(nil)
+-	obj.Header, err = mergedHeaders.sanitized()
+-	if err != nil {
+-		return nil, fmt.Errorf("go-jose/go-jose: cannot sanitize merged headers: %v (%v)", err, mergedHeaders)
+-	}
+-
+ 	if len(parsed.Recipients) == 0 {
+ 		obj.recipients = []recipientInfo{
+ 			{
+@@ -190,6 +181,29 @@
+ 		if headers.getAlgorithm() == "" || headers.getEncryption() == "" {
+ 			return nil, fmt.Errorf("go-jose/go-jose: message is missing alg/enc headers")
+ 		}
++	}
++	// Validate each source header before merging. A private JWK or EPK in an
++	// unprotected or recipient header must not be hidden by a protected value.
++	for _, header := range []*rawHeader{obj.protected, obj.unprotected} {
++		if header != nil {
++			if err := header.validatePublicKeyHeaders(); err != nil {
++				return nil, err
++			}
++		}
++	}
++	for _, recipient := range obj.recipients {
++		if recipient.header != nil {
++			if err := recipient.header.validatePublicKeyHeaders(); err != nil {
++				return nil, err
++			}
++		}
++	}
++	// Merge only after all recipient and unprotected headers are assigned.
++	mergedHeaders := obj.mergedHeaders(nil)
++	var err error
++	obj.Header, err = mergedHeaders.sanitized()
++	if err != nil {
++		return nil, fmt.Errorf("go-jose/go-jose: cannot sanitize merged headers: %w", err)
+ 	}
+ 
+ 	obj.iv = parsed.Iv.bytes()
+--- a/json/scanner.go
++++ b/json/scanner.go
+@@ -140,6 +140,10 @@
+ 	parseArrayValue         // parsing array value
+ )
+ 
++// This limits the max nesting depth to prevent stack overflow.
++// This is permitted by https://tools.ietf.org/html/rfc7159#section-9
++const maxNestingDepth = 10000
++
+ // reset prepares the scanner for use.
+ // It must be called before calling s.step.
+ func (s *scanner) reset() {
+@@ -170,8 +174,13 @@
+ }
+ 
+ // pushParseState pushes a new parse state p onto the parse stack.
+-func (s *scanner) pushParseState(p int) {
+-	s.parseState = append(s.parseState, p)
++// an error state is returned if maxNestingDepth was exceeded, otherwise successState is returned.
++func (s *scanner) pushParseState(c byte, newParseState int, successState int) int {
++	s.parseState = append(s.parseState, newParseState)
++	if len(s.parseState) <= maxNestingDepth {
++		return successState
++	}
++	return s.error(c, "exceeded max depth")
+ }
+ 
+ // popParseState pops a parse state (already obtained) off the stack
+@@ -211,12 +220,10 @@
+ 	switch c {
+ 	case '{':
+ 		s.step = stateBeginStringOrEmpty
+-		s.pushParseState(parseObjectKey)
+-		return scanBeginObject
++		return s.pushParseState(c, parseObjectKey, scanBeginObject)
+ 	case '[':
+ 		s.step = stateBeginValueOrEmpty
+-		s.pushParseState(parseArrayValue)
+-		return scanBeginArray
++		return s.pushParseState(c, parseArrayValue, scanBeginArray)
+ 	case '"':
+ 		s.step = stateInString
+ 		return scanBeginLiteral
+--- a/cipher/cbc_hmac.go
++++ b/cipher/cbc_hmac.go
+@@ -51,6 +51,8 @@
+ 		hash = sha512.New384
+ 	case 32:
+ 		hash = sha512.New
++	default:
++		return nil, errors.New("go-jose/go-jose: invalid key size for CBC-HMAC")
+ 	}
+ 
+ 	return &cbcAEAD{
+@@ -176,7 +178,9 @@
+ 
+ // Remove padding
+ func unpadBuffer(buffer []byte, blockSize int) ([]byte, error) {
+-	if len(buffer)%blockSize != 0 {
++	// A padded buffer can't be empty because an empty input is padded with
++	// `blockSize` bytes, resulting in a non-empty ciphertext.
++	if len(buffer) == 0 || len(buffer)%blockSize != 0 {
+ 		return nil, errors.New("go-jose/go-jose: invalid padding")
+ 	}
+ 

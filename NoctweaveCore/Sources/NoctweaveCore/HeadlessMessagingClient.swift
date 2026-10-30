@@ -1247,15 +1247,37 @@ public actor HeadlessMessagingClient {
             throw HeadlessMessagingClientError.invalidState
         }
         let runtime = try openGroupRuntime(groupID: event.groupID)
-        let resolvedRouteSets = try await runtime.routeSetsForTransport(
-            additionalRouteSets: routeSets,
+        let before = await runtime.snapshot()
+        let existingPending = before.pendingApplicationPublications.first {
+            $0.event.id == event.id
+        }
+        let hasTransport = before.outboundTransportOperations.contains {
+            $0.kind == .application && $0.logicalID == event.id
+        }
+        let resolvedRouteSets: [SignedGroupOpaqueRouteSetV2]
+        if let durableRoutes = existingPending?.transportRouteSets {
+            resolvedRouteSets = durableRoutes
+        } else if hasTransport {
+            resolvedRouteSets = []
+        } else {
+            resolvedRouteSets = try await runtime.routeSetsForTransport(
+                additionalRouteSets: routeSets,
+                at: date
+            )
+        }
+        let envelope = try await runtime.prepareApplicationEvent(
+            event,
+            transportRouteSets: existingPending?.transportRouteSets == nil && hasTransport
+                ? nil : resolvedRouteSets,
             at: date
         )
-        let envelope = try await runtime.prepareApplicationEvent(event, at: date)
+        let preparedAt = await runtime.snapshot().pendingApplicationPublications.first {
+            $0.event.id == event.id
+        }?.preparedAt ?? date
         let operation = try await runtime.prepareApplicationTransport(
             eventID: event.id,
             routeSets: resolvedRouteSets,
-            at: date
+            at: preparedAt
         )
         if operation == nil {
             try await runtime.markApplicationPublished(eventID: event.id)
@@ -1438,6 +1460,12 @@ public actor HeadlessMessagingClient {
         // second cache lookup after `prepareEpoch` has durably advanced state:
         // a lookup failure at that point would leave a committed member
         // without a returnable Welcome.
+        let exactRemoteRouteSets = routeAnnouncements.compactMap { announcement in
+            announcement.routeSet.ownerCredentialHandle
+                == snapshot.localCredential.credentialHandle
+                ? nil
+                : announcement.routeSet
+        } + [initialRouteSet]
         let publication = try await runtime.prepareEpoch(
             operation: .addMember,
             proposedMembers: snapshot.signedState.members + [newMember],
@@ -1446,14 +1474,9 @@ public actor HeadlessMessagingClient {
             proposedPermissions: snapshot.signedState.permissions,
             proposedMetadataDigest: snapshot.signedState.metadataDigest,
             idempotencyKey: idempotencyKey,
+            transportRouteSets: exactRemoteRouteSets,
             createdAt: createdAt
         )
-        let exactRemoteRouteSets = routeAnnouncements.compactMap { announcement in
-            announcement.routeSet.ownerCredentialHandle
-                == snapshot.localCredential.credentialHandle
-                ? nil
-                : announcement.routeSet
-        } + [initialRouteSet]
         let transportOperation = try await runtime.prepareEpochTransport(
             intentID: publication.intentId,
             routeSets: exactRemoteRouteSets,
@@ -1517,6 +1540,27 @@ public actor HeadlessMessagingClient {
             throw HeadlessMessagingClientError.invalidState
         }
         let runtime = try openGroupRuntime(groupID: groupID)
+        let before = await runtime.snapshot()
+        let existingIntent = before.epochIntents.first {
+            $0.idempotencyKey == idempotencyKey
+        }
+        let selectedRouteSets: [SignedGroupOpaqueRouteSetV2]
+        if let durableRoutes = existingIntent?.transportRouteSets {
+            selectedRouteSets = durableRoutes
+        } else {
+            guard before.signedState.epoch < UInt64.max else {
+                throw HeadlessMessagingClientError.invalidState
+            }
+            let recipientCredentials = proposedCredentials.filter {
+                $0.isActive(at: before.signedState.epoch)
+                    || $0.isActive(at: before.signedState.epoch + 1)
+            }
+            selectedRouteSets = try await runtime.routeSetsForTransport(
+                credentials: recipientCredentials,
+                additionalRouteSets: routeSets,
+                at: createdAt
+            )
+        }
         let publication = try await runtime.prepareEpoch(
             operation: operation,
             proposedMembers: proposedMembers,
@@ -1526,17 +1570,16 @@ public actor HeadlessMessagingClient {
             proposedPermissions: proposedPermissions,
             proposedMetadataDigest: proposedMetadataDigest,
             idempotencyKey: idempotencyKey,
+            transportRouteSets: selectedRouteSets,
             createdAt: createdAt
         )
-        let resolvedRouteSets = try await runtime.routeSetsForTransport(
-            state: publication.signedState,
-            additionalRouteSets: routeSets,
-            at: createdAt
-        )
+        let committedIntent = await runtime.snapshot().epochIntents.first {
+            $0.id == publication.intentId
+        }
         let transportOperation = try await runtime.prepareEpochTransport(
             intentID: publication.intentId,
-            routeSets: resolvedRouteSets,
-            at: createdAt
+            routeSets: committedIntent?.transportRouteSets ?? selectedRouteSets,
+            at: max(createdAt, committedIntent?.updatedAt ?? createdAt)
         )
         if transportOperation == nil {
             try await runtime.finalizeEpoch(
@@ -1758,9 +1801,8 @@ public actor HeadlessMessagingClient {
         )
     }
 
-    /// Resumes every incomplete operation plus operations whose relay evidence
-    /// was saved before a crash but whose logical application/epoch projection
-    /// was not yet finalized.
+    /// Materializes any Headless epoch intent saved before its transport
+    /// journal, then resumes incomplete operations and logical projections.
     public func resumePendingGroupTransports(
         groupID: UUID,
         at date: Date = Date()
@@ -1774,6 +1816,56 @@ public actor HeadlessMessagingClient {
             }
         }
         let runtime = try openGroupRuntime(groupID: groupID)
+        let initial = await runtime.snapshot()
+        for intent in initial.epochIntents where intent.requiresRecoveryState {
+            guard !initial.outboundTransportOperations.contains(where: {
+                $0.kind == .epoch && $0.logicalID == intent.id
+            }) else { continue }
+            // A legacy low-level intent had no durable route selection; never
+            // invent destinations after the signed state may have advanced.
+            guard let routes = intent.transportRouteSets,
+                  intent.phase == .prepared || intent.phase == .stateCommitted else {
+                throw HeadlessMessagingClientError.invalidState
+            }
+            _ = try await runtime.resumePreparedEpoch(
+                intentId: intent.id,
+                at: intent.updatedAt
+            )
+            let committed = await runtime.snapshot().epochIntents.first {
+                $0.id == intent.id
+            }
+            guard let committed else { throw HeadlessMessagingClientError.invalidState }
+            let operation = try await runtime.prepareEpochTransport(
+                intentID: intent.id,
+                routeSets: routes,
+                // The routes were authenticated at preparation time. Capture
+                // the exact intended destination snapshot at that saved time.
+                at: committed.updatedAt
+            )
+            if operation == nil {
+                try await runtime.finalizeEpoch(
+                    intentId: intent.id,
+                    at: committed.updatedAt
+                )
+            }
+        }
+        let afterEpochs = await runtime.snapshot()
+        for pending in afterEpochs.pendingApplicationPublications {
+            guard !afterEpochs.outboundTransportOperations.contains(where: {
+                $0.kind == .application && $0.logicalID == pending.event.id
+            }) else { continue }
+            guard let routes = pending.transportRouteSets else {
+                throw HeadlessMessagingClientError.invalidState
+            }
+            let operation = try await runtime.prepareApplicationTransport(
+                eventID: pending.event.id,
+                routeSets: routes,
+                at: pending.preparedAt
+            )
+            if operation == nil {
+                try await runtime.markApplicationPublished(eventID: pending.event.id)
+            }
+        }
         let snapshot = await runtime.snapshot()
         let pendingApplicationIDs = Set(
             snapshot.pendingApplicationPublications.map { $0.event.id }
@@ -6393,9 +6485,6 @@ public actor HeadlessMessagingClient {
         expectedCurrentRecord: GroupRuntimeRecord,
         originatingPersonaID: UUID
     ) async throws {
-        guard try record.isStructurallyValidThrowing else {
-            throw HeadlessMessagingClientError.invalidState
-        }
         try await withStateSaveLock {
             guard state.activePersonaID == originatingPersonaID else {
                 throw HeadlessMessagingClientError.invalidState
@@ -6406,9 +6495,21 @@ public actor HeadlessMessagingClient {
                 throw HeadlessMessagingClientError.staleGroupRuntime
             }
             var candidate = state
-            try candidate.updateActivePersona { persona in
-                try persona.upsert(groupRuntime: record)
+            guard let index = candidate.personas.firstIndex(where: {
+                $0.id == originatingPersonaID
+            }) else {
+                throw HeadlessMessagingClientError.invalidState
             }
+            var persona = candidate.personas[index]
+            do {
+                try persona.upsert(groupRuntime: record)
+            } catch PersonaProfileV1Error.invalidState {
+                throw HeadlessMessagingClientError.invalidState
+            }
+            // `upsert` checks this runtime and persona scope separation. The
+            // aggregate check below still covers every persona and cross-scope
+            // authority before the state store's atomic compare-and-save.
+            candidate.personas[index] = persona
             guard try candidate.isStructurallyValidThrowing else {
                 throw HeadlessMessagingClientError.invalidState
             }
