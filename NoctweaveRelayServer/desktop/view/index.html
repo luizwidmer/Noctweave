@@ -14,7 +14,7 @@
       <div><strong>Noctweave</strong><span>Relay Desktop</span></div>
     </div>
     <nav aria-label="Relay sections">
-      <a href="#overview" class="active"><span>◌</span> Overview</a>
+      <a href="#overview" class="active" aria-current="location"><span>◌</span> Overview</a>
       <a href="#setup"><span>◇</span> Local setup</a>
       <a href="#operator"><span>⌁</span> Operator console</a>
       <a href="#diagnostics" id="diagnosticsLink"><span>≡</span> Diagnostics</a>
@@ -29,8 +29,8 @@
     </header>
 
     <section id="overview" class="panel hero">
-      <div><span class="eyebrow">CURRENT RUNTIME</span><h2 id="relayState">Checking…</h2><p id="statusDetail">Inspecting Docker and the managed relay.</p></div>
-      <div class="actions"><button id="startRelay" class="primary">Start relay</button><button id="stopRelay">Stop</button></div>
+      <div><span class="eyebrow">CURRENT RUNTIME</span><h2 id="relayState">Checking…</h2><p id="statusDetail" role="status">Inspecting Docker and the managed relay.</p></div>
+      <div class="actions"><button id="retryStatus" hidden>Check again</button><button id="startRelay" class="primary" disabled>Start relay</button><button id="stopRelay" disabled>Stop</button></div>
     </section>
 
     <section class="metrics" aria-label="Relay status">
@@ -43,8 +43,8 @@
     <details id="setup" class="panel setupPanel" open>
       <summary><span><span class="eyebrow">LOCAL BUILD</span><strong>Runtime setup</strong><small id="setupSummary">Configure this relay</small></span><span class="disclosureHint">Show settings</span></summary>
       <div class="detailsBody">
-        <div class="sectionHeader"><div><h2>Basic setup</h2><p>Choose how this relay is named and who can reach it.</p></div><button id="buildImage">Build from source</button></div>
-        <form id="relayForm">
+        <div class="sectionHeader"><div><h2>Basic setup</h2><p>Runtime settings apply the next time you start the relay.</p></div><button id="buildImage" disabled>Build from source</button></div>
+        <form id="relayForm" inert>
           <label>Relay name<input name="relayName" maxlength="80" required></label>
           <label>Exposure<select name="exposure"><option value="local">This computer only</option><option value="network">LAN / host network</option></select></label>
           <label class="check wide"><input name="noctwebHostingEnabled" type="checkbox"> Enable Noctweb hosting and Publisher / Lab</label>
@@ -68,12 +68,12 @@
 
     <section id="operator" class="panel split">
       <div><span class="eyebrow">CONTROL PLANE</span><h2>Operator console</h2><p>Manage the running relay in its authenticated local console. The operator port remains bound to loopback.</p></div>
-      <div class="stack"><button id="openConsole" class="primary">Open local console</button><button id="openPublisher">Open Publisher / Lab</button><details class="credentialMenu"><summary>Credentials</summary><div><button id="copyToken">Copy operator token</button><button id="copyPublisherPassword">Copy publisher password</button></div></details></div>
+      <div class="stack"><button id="openConsole" class="primary" disabled>Open local console</button><button id="openPublisher" disabled>Open Publisher / Lab</button><details class="credentialMenu"><summary>Credentials</summary><div><button id="copyToken" disabled>Copy operator token</button><button id="copyPublisherPassword" disabled>Copy publisher password</button></div></details></div>
     </section>
 
     <details id="diagnostics" class="panel diagnosticsPanel">
       <summary><span><span class="eyebrow">DIAGNOSTICS</span><strong>Recent relay logs</strong><small>Open only when troubleshooting</small></span><span class="disclosureHint">Show logs</span></summary>
-      <div class="detailsBody"><div class="sectionHeader"><p>Output is bounded to the latest container lines and excludes the generated operator token.</p><button id="refreshLogs">Refresh</button></div><pre id="logOutput">Open diagnostics after starting the relay.</pre></div>
+      <div class="detailsBody"><div class="sectionHeader"><p>Output is bounded to the latest container lines and excludes the generated operator token.</p><button id="refreshLogs" disabled>Refresh</button></div><pre id="logOutput" tabindex="0">Open diagnostics after starting the relay.</pre></div>
     </details>
 
     <section class="note"><strong>The relay keeps running when this window closes.</strong><span>Stop it here or with Docker. Relay state remains in the <code>noctweave-relay-data</code> volume until you explicitly remove that volume.</span></section>

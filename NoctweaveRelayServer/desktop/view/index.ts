@@ -26,6 +26,7 @@ const tokenButton = $("#copyToken") as HTMLButtonElement;
 const publisherButton = $("#openPublisher") as HTMLButtonElement;
 const publisherPasswordButton = $("#copyPublisherPassword") as HTMLButtonElement;
 const logsButton = $("#refreshLogs") as HTMLButtonElement;
+const retryStatusButton = $("#retryStatus") as HTMLButtonElement;
 const setupPanel = $("#setup") as HTMLDetailsElement;
 const diagnosticsPanel = $("#diagnostics") as HTMLDetailsElement;
 const diagnosticsLink = $("#diagnosticsLink") as HTMLAnchorElement;
@@ -33,6 +34,9 @@ const appearanceSelect = $("#appearanceSelect") as HTMLSelectElement;
 const appearanceKey = "noctweave.desktop.appearance";
 let currentStatus: RelayLauncherStatus | undefined;
 let busy = false;
+let refreshing = false;
+let statusRevision = 0;
+let toastTimer: number | undefined;
 let activityMessage: { text: string; isError: boolean } | undefined;
 
 function applyAppearance(value: string): void {
@@ -74,6 +78,7 @@ function render(status: RelayLauncherStatus, preserveForm = false): void {
   const firstRender = currentStatus === undefined;
   currentStatus = status;
   if (!preserveForm) fillSettings(status.settings);
+  form.inert = busy;
   const running = status.containerState === "running";
   $("#dockerState").textContent = status.dockerAvailable ? "Ready" : "Unavailable";
   $("#imageState").textContent = status.imageReady ? "Built locally" : "Not built";
@@ -81,8 +86,7 @@ function render(status: RelayLauncherStatus, preserveForm = false): void {
   $("#relayEndpoint").textContent = status.relayEndpoint;
   $("#noctwebState").textContent = status.publisherURL ? "Host + Lab" : "Disabled";
   $("#setupSummary").textContent = status.imageReady ? "Configured · open to change runtime settings" : "Build and configure this relay";
-  $("#statusDetail").textContent = activityMessage?.text ?? status.detail;
-  $("#statusDetail").classList.toggle("errorText", activityMessage?.isError === true);
+  showStatusDetail(activityMessage?.text ?? status.detail, activityMessage?.isError);
   $("#statusDot").className = `statusDot ${status.relayHealthy ? "online" : running ? "waiting" : ""}`;
   $("#statusLabel").textContent = status.relayHealthy ? "Relay online" : running ? "Starting relay" : "Relay stopped";
   startButton.disabled = busy || !status.dockerAvailable || !status.imageReady || running;
@@ -94,8 +98,15 @@ function render(status: RelayLauncherStatus, preserveForm = false): void {
   publisherPasswordButton.disabled = busy || !status.relayHealthy || status.publisherURL === null;
   publisherButton.hidden = status.publisherURL === null;
   publisherPasswordButton.hidden = status.publisherURL === null;
-  if (firstRender) setupPanel.open = !status.imageReady;
-  if (activityMessage?.isError) diagnosticsPanel.open = true;
+  logsButton.disabled = busy || status.containerState === "missing";
+  retryStatusButton.hidden = status.dockerAvailable;
+  if (!preserveForm && firstRender && !window.location.hash) setupPanel.open = !status.imageReady;
+}
+
+function showStatusDetail(text: string, isError = false): void {
+  const detail = $("#statusDetail");
+  if (detail.textContent !== text) detail.textContent = text;
+  detail.classList.toggle("errorText", isError);
 }
 
 function setBusy(value: boolean, label?: string): void {
@@ -110,17 +121,26 @@ function showToast(message: string, isError = false): void {
   toast.textContent = message;
   toast.classList.toggle("error", isError);
   toast.classList.add("visible");
-  window.setTimeout(() => toast.classList.remove("visible"), 4200);
+  window.clearTimeout(toastTimer);
+  toastTimer = window.setTimeout(() => toast.classList.remove("visible"), 4200);
 }
 
-async function perform(label: string, operation: () => Promise<RelayLauncherStatus>): Promise<void> {
+async function perform(
+  label: string,
+  operation: () => Promise<RelayLauncherStatus>,
+  applyReturnedSettings = false
+): Promise<void> {
+  if (busy || !currentStatus) return;
+  statusRevision++;
   setBusy(true, label);
   try {
+    const status = await operation();
     activityMessage = undefined;
-    render(await operation());
+    render(status, !applyReturnedSettings);
   } catch (error) {
     const message = error instanceof Error ? error.message : "Operation failed.";
     activityMessage = { text: message, isError: true };
+    diagnosticsPanel.open = true;
     showToast(message, true);
   } finally {
     setBusy(false);
@@ -131,33 +151,52 @@ buildButton.addEventListener("click", () => perform(
   "Building the relay image from the bundled source. The first build may take several minutes…",
   () => desktop.rpc!.request.buildImage({})
 ));
-startButton.addEventListener("click", () => perform(
-  "Starting the managed relay container…",
-  () => desktop.rpc!.request.startRelay(settingsFromForm())
-));
+startButton.addEventListener("click", () => {
+  if (!form.checkValidity()) {
+    setupPanel.open = true;
+    const details = form.querySelector(":invalid")?.closest("details");
+    if (details) details.open = true;
+    form.reportValidity();
+    return;
+  }
+  const settings = settingsFromForm();
+  void perform(
+    "Starting the managed relay container…",
+    () => desktop.rpc!.request.startRelay(settings),
+    true
+  );
+});
 stopButton.addEventListener("click", () => perform(
   "Stopping the relay without deleting its encrypted queues or configuration…",
   () => desktop.rpc!.request.stopRelay({})
 ));
-consoleButton.addEventListener("click", async () => {
+async function runAction(action: () => Promise<void>): Promise<void> {
+  try {
+    await action();
+  } catch (error) {
+    showToast(error instanceof Error ? error.message : "Action failed.", true);
+  }
+}
+
+consoleButton.addEventListener("click", () => runAction(async () => {
   await desktop.rpc!.request.openConsole({});
-});
-tokenButton.addEventListener("click", async () => {
+}));
+tokenButton.addEventListener("click", () => runAction(async () => {
   await desktop.rpc!.request.copyAdminToken({});
   showToast("Operator token copied. Paste it into the local console login.");
-});
-publisherButton.addEventListener("click", async () => {
+}));
+publisherButton.addEventListener("click", () => runAction(async () => {
   if (!await desktop.rpc!.request.openPublisher({})) {
     showToast("Enable Noctweb hosting and restart the relay first.", true);
   }
-});
-publisherPasswordButton.addEventListener("click", async () => {
+}));
+publisherPasswordButton.addEventListener("click", () => runAction(async () => {
   if (await desktop.rpc!.request.copyPublisherPassword({})) {
     showToast("Publisher password copied. It is used only for hosting writes.");
   } else {
     showToast("Noctweb hosting is disabled.", true);
   }
-});
+}));
 logsButton.addEventListener("click", async () => {
   try {
     $("#logOutput").textContent = await desktop.rpc!.request.getLogs({});
@@ -169,15 +208,46 @@ diagnosticsPanel.addEventListener("toggle", () => {
   if (diagnosticsPanel.open && currentStatus?.containerState === "running") logsButton.click();
 });
 diagnosticsLink.addEventListener("click", () => { diagnosticsPanel.open = true; });
+$(".rail a[href='#setup']").addEventListener("click", () => { setupPanel.open = true; });
 
-async function refresh(preserveForm = true): Promise<void> {
-  if (busy) return;
+function selectNavigationLink(): void {
+  const location = window.location.hash || "#overview";
+  document.querySelectorAll<HTMLAnchorElement>(".rail nav a").forEach((link) => {
+    const selected = link.hash === location;
+    link.classList.toggle("active", selected);
+    if (selected) link.setAttribute("aria-current", "location");
+    else link.removeAttribute("aria-current");
+  });
+  if (location === "#setup") setupPanel.open = true;
+  if (location === "#diagnostics") diagnosticsPanel.open = true;
+}
+
+async function refresh(manual = false): Promise<void> {
+  if (busy || refreshing) return;
+  const revision = statusRevision;
+  refreshing = true;
+  retryStatusButton.disabled = true;
   try {
-    render(await desktop.rpc!.request.getStatus({}), preserveForm);
+    const status = await desktop.rpc!.request.getStatus({});
+    if (revision === statusRevision) render(status, currentStatus !== undefined);
   } catch (error) {
-    showToast(error instanceof Error ? error.message : "Could not inspect Docker.", true);
+    if (revision !== statusRevision) return;
+    const message = error instanceof Error ? error.message : "Could not inspect Docker.";
+    if (!currentStatus) {
+      $("#relayState").textContent = "Status unavailable";
+      showStatusDetail(message, true);
+      retryStatusButton.hidden = false;
+    } else if (manual) {
+      showToast(message, true);
+    }
+  } finally {
+    refreshing = false;
+    retryStatusButton.disabled = false;
   }
 }
 
-render(await desktop.rpc!.request.getStatus({}));
+window.addEventListener("hashchange", selectNavigationLink);
+retryStatusButton.addEventListener("click", () => void refresh(true));
+selectNavigationLink();
+void refresh();
 window.setInterval(() => void refresh(), 5_000);

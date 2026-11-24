@@ -286,19 +286,21 @@ struct NoctwebPublisherSurface {
             <details class="identity-chip" id="identityChip"><summary><span>Publisher verified</span><strong id="publisherShort">Preparing…</strong></summary><p>The active publisher scope stays in this browser. The relay stores signed bytes; hosting is not ownership or finality.</p></details>
           </section>
 
-          <nav class="workspace-tabs" aria-label="Publisher workspace">
-            <button class="tab active" data-tab="design" type="button">Design</button>
-            <button class="tab" data-tab="code" type="button">Code</button>
-            <button class="tab" data-tab="preview" type="button">Preview</button>
-          </nav>
+          <div class="workspace-bar">
+            <div class="workspace-tabs" role="tablist" aria-label="Publisher workspace">
+              <button class="tab active" id="designTab" data-tab="design" type="button" role="tab" aria-selected="true" aria-controls="designPanel">Design</button>
+              <button class="tab" id="codeTab" data-tab="code" type="button" role="tab" aria-selected="false" aria-controls="codePanel" tabindex="-1">Code</button>
+              <button class="tab" id="previewTab" data-tab="preview" type="button" role="tab" aria-selected="false" aria-controls="previewPanel" tabindex="-1">Preview</button>
+            </div>
+            <span class="save-state" id="saveState" role="status" data-state="pending">Opening vault…</span>
+          </div>
 
           <section class="workspace">
-            <div class="panel active" data-panel="design">
+            <div class="panel active" data-panel="design" id="designPanel" role="tabpanel" aria-labelledby="designTab">
               <div class="form-layout">
                 <section class="form-card">
                   <div class="section-heading">
                     <div><p class="eyebrow">Page</p><h2>Content</h2></div>
-                    <span class="save-state" id="saveState">Saved locally</span>
                   </div>
                   <label>Site label
                     <span class="address-field">
@@ -329,19 +331,21 @@ struct NoctwebPublisherSurface {
               </div>
             </div>
 
-            <div class="panel" data-panel="code">
+            <div class="panel" data-panel="code" id="codePanel" role="tabpanel" aria-labelledby="codeTab">
               <div class="code-toolbar">
                 <div class="file-tabs" role="tablist" aria-label="Source file">
-                  <button class="file-tab active" data-file="html" type="button">index.html</button>
-                  <button class="file-tab" data-file="css" type="button">styles.css</button>
-                  <button class="file-tab" data-file="js" type="button">app.js</button>
+                  <button class="file-tab active" id="htmlTab" data-file="html" type="button" role="tab" aria-selected="true" aria-controls="sourcePanel">index.html</button>
+                  <button class="file-tab" id="cssTab" data-file="css" type="button" role="tab" aria-selected="false" aria-controls="sourcePanel" tabindex="-1">styles.css</button>
+                  <button class="file-tab" id="jsTab" data-file="js" type="button" role="tab" aria-selected="false" aria-controls="sourcePanel" tabindex="-1">app.js</button>
                 </div>
                 <span>HTML · CSS · JS · compiled React compatible</span>
               </div>
-              <textarea class="code-editor" id="codeEditor" aria-label="Source editor" spellcheck="false"></textarea>
+              <div id="sourcePanel" role="tabpanel" aria-labelledby="htmlTab">
+                <textarea class="code-editor" id="codeEditor" aria-label="Source editor" spellcheck="false"></textarea>
+              </div>
             </div>
 
-            <div class="panel preview-panel" data-panel="preview">
+            <div class="panel preview-panel" data-panel="preview" id="previewPanel" role="tabpanel" aria-labelledby="previewTab">
               <div class="preview-toolbar">
                 <div>
                   <strong id="previewAddress">noct://site.relay/</strong>
@@ -544,7 +548,8 @@ struct NoctwebPublisherSurface {
     .workspace-menu-popover .appearance-control { display: grid; gap: 7px; }
     .workspace-menu-popover .appearance-control span { display: block; }
     .workspace-menu-popover .appearance-control select, .workspace-menu-popover .button { width: 100%; }
-    .workspace-tabs { display: flex; gap: 4px; width: max-content; padding: 4px; margin-bottom: 12px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface-2); }
+    .workspace-bar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 16px; margin-bottom: 12px; }
+    .workspace-tabs { display: flex; gap: 4px; width: max-content; padding: 4px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface-2); }
     .tab, .file-tab {
       border: 0;
       background: transparent;
@@ -569,7 +574,9 @@ struct NoctwebPublisherSurface {
     .form-card { padding: clamp(24px, 4vw, 42px); background: var(--surface); }
     .section-heading { display: flex; justify-content: space-between; align-items: center; gap: 16px; margin-bottom: 28px; }
     .section-heading h2, .publication-card h2, .dialog-heading h2 { margin: 5px 0 0; font-size: 20px; letter-spacing: -.02em; }
-    .save-state { color: var(--success); font-size: 11px; }
+    .save-state { color: var(--success); font-size: 12px; font-weight: 600; }
+    .save-state[data-state="pending"] { color: var(--muted); }
+    .save-state[data-state="error"] { color: var(--danger); }
     label { display: grid; gap: 8px; margin: 0 0 20px; color: var(--text); font-size: 12px; font-weight: 650; }
     .cta-toggle { display: flex; align-items: center; gap: 9px; min-height: 42px; padding: 0 12px; border: 1px solid var(--line); border-radius: 9px; background: var(--surface-2); }
     .cta-toggle input { width: auto; margin: 0; accent-color: var(--accent); }
@@ -762,7 +769,7 @@ struct NoctwebPublisherSurface {
         "relayLabel", "publisherShort", "identityChip", "siteLabel", "suffixText",
         "titleInput", "subtitleInput", "bodyInput", "accentInput", "accentValue",
         "ctaEnabledInput", "ctaFields", "buttonTextInput", "buttonURLInput", "customCodeNotice", "applyDesignButton",
-        "saveState", "codeEditor", "previewAddress", "verificationState", "previewFrame",
+        "saveState", "codeEditor", "sourcePanel", "previewAddress", "verificationState", "previewFrame",
         "refreshPreviewButton", "resetButton", "hostButton", "publicationCard", "hostedHeading",
         "hostedDetail", "copyLinkButton", "unhostButton", "hostDialog", "hostForm",
         "dialogTitle", "dialogDescription", "passwordInput", "retentionField",
@@ -787,6 +794,7 @@ struct NoctwebPublisherSurface {
       let dialogMode = "host";
       let previewURLs = [];
       let saveTimer;
+      let saveRevision = 0;
       let toastTimer;
       function applyShellTheme(value) {
         const theme = ["system", "light", "dark"].includes(value) ? value : "system";
@@ -848,10 +856,12 @@ struct NoctwebPublisherSurface {
           updateIdentityUI();
           updateHostingUI();
           updatePreview();
+          showSaveState("Vault ready", "saved");
         } catch (error) {
           console.error(error);
           if (openingVault) showVaultRecovery(error);
           else showToast(safeMessage(error, "Publisher could not start."));
+          showSaveState("Draft unavailable", "error");
           elements.relayLabel.textContent = "Relay unavailable";
           elements.hostButton.disabled = true;
           return;
@@ -909,12 +919,8 @@ struct NoctwebPublisherSurface {
 
       function bindEvents() {
         elements.appearanceSelect.addEventListener("change", () => applyShellTheme(elements.appearanceSelect.value));
-        document.querySelectorAll("[data-tab]").forEach((button) => {
-          button.addEventListener("click", () => selectPanel(button.dataset.tab));
-        });
-        document.querySelectorAll("[data-file]").forEach((button) => {
-          button.addEventListener("click", () => showFile(button.dataset.file));
-        });
+        bindTabs("tab", selectPanel);
+        bindTabs("file", showFile);
         const fields = [
           ["siteLabel", "siteLabel"], ["titleInput", "title"], ["subtitleInput", "subtitle"],
           ["bodyInput", "body"], ["accentInput", "accent"], ["buttonTextInput", "buttonText"],
@@ -963,10 +969,38 @@ struct NoctwebPublisherSurface {
         elements.hostForm.addEventListener("submit", handleDialogSubmit);
       }
 
-      function selectPanel(name) {
-        document.querySelectorAll("[data-tab]").forEach((button) => {
-          button.classList.toggle("active", button.dataset.tab === name);
+      function bindTabs(key, select) {
+        const tabs = [...document.querySelectorAll(`[data-${key}]`)];
+        tabs.forEach((tab, index) => {
+          tab.addEventListener("click", () => select(tab.dataset[key]));
+          tab.addEventListener("keydown", (event) => {
+            let nextIndex;
+            switch (event.key) {
+              case "ArrowLeft": nextIndex = (index + tabs.length - 1) % tabs.length; break;
+              case "ArrowRight": nextIndex = (index + 1) % tabs.length; break;
+              case "Home": nextIndex = 0; break;
+              case "End": nextIndex = tabs.length - 1; break;
+              default: return;
+            }
+            event.preventDefault();
+            const next = tabs[nextIndex];
+            select(next.dataset[key]);
+            next.focus();
+          });
         });
+      }
+
+      function selectTab(key, name) {
+        for (const tab of document.querySelectorAll(`[data-${key}]`)) {
+          const selected = tab.dataset[key] === name;
+          tab.classList.toggle("active", selected);
+          tab.setAttribute("aria-selected", String(selected));
+          tab.tabIndex = selected ? 0 : -1;
+        }
+      }
+
+      function selectPanel(name) {
+        selectTab("tab", name);
         document.querySelectorAll("[data-panel]").forEach((panel) => {
           panel.classList.toggle("active", panel.dataset.panel === name);
         });
@@ -975,9 +1009,8 @@ struct NoctwebPublisherSurface {
 
       function showFile(name) {
         currentFile = name;
-        document.querySelectorAll("[data-file]").forEach((button) => {
-          button.classList.toggle("active", button.dataset.file === name);
-        });
+        selectTab("file", name);
+        elements.sourcePanel.setAttribute("aria-labelledby", `${name}Tab`);
         elements.codeEditor.value = project[name] || "";
         elements.codeEditor.setAttribute("aria-label", `${name} source editor`);
       }
@@ -1932,16 +1965,24 @@ struct NoctwebPublisherSurface {
 
       function scheduleSave() {
         clearTimeout(saveTimer);
-        elements.saveState.textContent = "Saving…";
+        const revision = ++saveRevision;
+        showSaveState("Saving…", "pending");
         saveTimer = setTimeout(() => persistProject().catch((error) => {
-          elements.saveState.textContent = "Save failed";
+          if (revision !== saveRevision) return;
+          showSaveState("Save failed", "error");
           showToast(safeMessage(error, "Publisher vault could not be saved."));
         }), 350);
       }
 
       async function persistProject() {
+        const revision = saveRevision;
         await writeRecord("projects", project);
-        elements.saveState.textContent = "Saved in vault";
+        if (revision === saveRevision) showSaveState("Saved in vault", "saved");
+      }
+
+      function showSaveState(text, state) {
+        elements.saveState.textContent = text;
+        elements.saveState.dataset.state = state;
       }
 
       function canonicalJSON(value) {

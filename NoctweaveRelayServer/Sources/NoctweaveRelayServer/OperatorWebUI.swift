@@ -28,24 +28,24 @@ enum OperatorWebUI {
       <main class="app" id="app" hidden>
         <aside class="rail">
           <div class="brand"><div class="brandMark small"><svg class="brandLogo" viewBox="0 0 256 256" aria-hidden="true"><path d="M34 34h96v70h-26v26H34V34Z" fill="#C96A61"/><path d="M146 34h76v96h-54v-26h-22V34Z" fill="#FAF3EA"/><path d="M34 146h70v22h26v54H34v-76Z" fill="#EBC7AF"/><path d="M168 146h54v76h-76v-54h22v-22Z" fill="#922D35"/></svg></div><div><strong>Noctweave</strong><span>Relay Console</span></div></div>
-          <nav id="navigation">
-            <button type="button" data-view="overview" class="active"><span>◌</span> Overview</button>
+          <nav id="navigation" aria-label="Relay sections">
+            <button type="button" data-view="overview" class="active" aria-current="page"><span aria-hidden="true">◌</span> Overview</button>
             <span class="navGroup">Basics</span>
-            <button type="button" data-view="general"><span>◇</span> Relay Profile</button>
-            <button type="button" data-view="delivery"><span>⇄</span> Delivery</button>
-            <button type="button" data-view="noctcord"><span>♯</span> NoctCord</button>
-            <button type="button" data-view="noctweb"><span>⌘</span> Noctweb</button>
-            <button type="button" data-view="storage"><span>▣</span> Storage</button>
+            <button type="button" data-view="general"><span aria-hidden="true">◇</span> Relay Profile</button>
+            <button type="button" data-view="delivery"><span aria-hidden="true">⇄</span> Delivery</button>
+            <button type="button" data-view="noctcord"><span aria-hidden="true">♯</span> NoctCord</button>
+            <button type="button" data-view="noctweb"><span aria-hidden="true">⌘</span> Noctweb</button>
+            <button type="button" data-view="storage"><span aria-hidden="true">▣</span> Storage</button>
             <span class="navGroup">Advanced</span>
-            <button type="button" data-view="federation"><span>⌁</span> Federation</button>
-            <button type="button" data-view="advanced"><span>⚙</span> Privacy research</button>
+            <button type="button" data-view="federation"><span aria-hidden="true">⌁</span> Federation</button>
+            <button type="button" data-view="advanced"><span aria-hidden="true">⚙</span> Privacy research</button>
           </nav>
           <div class="railStatus"><span class="onlineDot"></span><span id="railStatus">Relay online</span></div>
         </aside>
 
         <section class="content">
           <header class="topbar">
-            <div><span class="eyebrow" id="viewEyebrow">Operations</span><h2 id="viewTitle">Overview</h2></div>
+            <div><span class="eyebrow" id="viewEyebrow">Operations</span><h2 id="viewTitle" tabindex="-1">Overview</h2></div>
             <div class="actions"><span class="statusPill"><span class="onlineDot"></span><span id="headerRelay">Connected</span></span><label class="appearanceControl" for="appearanceSelect"><span>Appearance</span><select id="appearanceSelect" aria-label="Appearance"><option value="system">System</option><option value="light">Light</option><option value="dark">Dark</option></select></label><button type="button" id="logout" class="quiet">Lock</button></div>
           </header>
 
@@ -136,12 +136,25 @@ enum OperatorWebUI {
     body{background:var(--shell-bg);padding:env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left)}.ambient{background:radial-gradient(circle at 14% 8%,color-mix(in srgb,var(--shell-accent) 22%,transparent),transparent 38rem),radial-gradient(circle at 92% 72%,color-mix(in srgb,var(--shell-success) 13%,transparent),transparent 36rem),var(--shell-bg)}.rail{background:color-mix(in srgb,var(--shell-surface) 88%,transparent)}.sectionCard,.heroCard,.metricGrid article,.loginCard,.saveBar{background:color-mix(in srgb,var(--shell-surface) 92%,transparent);box-shadow:var(--shell-shadow)}.topbar{background:color-mix(in srgb,var(--shell-surface) 90%,transparent);border-color:var(--shell-border);box-shadow:var(--shell-shadow)}input,textarea,select{background:var(--shell-surface-raised);color:var(--shell-text)}button{color:var(--shell-text)}button:hover{border-color:var(--shell-accent)}.primary{box-shadow:0 10px 32px color-mix(in srgb,var(--shell-accent) 24%,transparent)}.quiet,.statusPill,.badge,.callout,.splitCards>div{background:var(--shell-surface-raised);color:var(--shell-text)}.rail nav button,.switch,.cardDescription strong,code{color:var(--shell-muted)}.rail nav button.active{color:var(--shell-text);background:color-mix(in srgb,var(--shell-accent) 17%,var(--shell-surface));border-color:color-mix(in srgb,var(--shell-accent) 35%,var(--shell-border))}.badge.good{color:var(--shell-success)}.warningBadge{color:var(--shell-warning)}.error,.toast.error{color:var(--shell-danger)!important}.switch>span{background:color-mix(in srgb,var(--shell-muted) 42%,var(--shell-surface-raised))}.toast{background:var(--shell-surface-raised);color:var(--shell-text);box-shadow:var(--shell-shadow)}button:focus-visible,input:focus-visible,textarea:focus-visible,select:focus-visible{outline-color:var(--shell-focus)}.appearanceControl{display:inline-flex;align-items:center;gap:7px;margin:0;color:var(--shell-muted);font-size:.68rem;letter-spacing:.06em;white-space:nowrap}.appearanceControl select{width:auto;height:36px;min-height:36px;margin:0;padding:0 28px 0 10px;border-radius:10px;font-size:.78rem;letter-spacing:0;text-transform:none}.appearanceControl span{display:none}.saveBar{bottom:calc(22px + env(safe-area-inset-bottom))}
     @media(max-width:820px){.rail{height:auto}.content{padding-bottom:calc(110px + env(safe-area-inset-bottom))}.appearanceControl span{display:inline}}
     .quickActions{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}.quickActions button{display:grid;gap:5px;min-height:88px;padding:14px;text-align:left;border-color:var(--shell-border);background:var(--shell-surface-raised)}.quickActions button strong{font-size:.9rem}.quickActions button span{color:var(--shell-muted);font-size:.78rem;line-height:1.35}@media(max-width:820px){.quickActions{grid-template-columns:1fr}}
-    .capabilityGrid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}.capabilityToggle{display:flex;align-items:center;justify-content:space-between;gap:18px;min-height:100px;padding:16px;border:1px solid var(--shell-border);border-radius:17px;background:var(--shell-surface-raised);text-transform:none;letter-spacing:0}.capabilityToggle>span:first-child{display:grid;gap:5px}.capabilityToggle strong{color:var(--shell-text);font-size:.9rem}.capabilityToggle small{color:var(--shell-muted);font-size:.77rem;line-height:1.4}.capabilityToggle>.switch{flex:0 0 auto}@media(max-width:820px){.capabilityGrid{grid-template-columns:1fr}.rail nav{overflow-x:auto;scrollbar-width:none}.rail nav::-webkit-scrollbar{display:none}.rail nav button{flex:0 0 70px}}
+    .capabilityGrid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}.capabilityToggle{display:flex;align-items:center;justify-content:space-between;gap:18px;min-height:100px;padding:16px;border:1px solid var(--shell-border);border-radius:17px;background:var(--shell-surface-raised);text-transform:none;letter-spacing:0}.capabilityToggle>span:first-child{display:grid;gap:5px}.capabilityToggle strong{color:var(--shell-text);font-size:.9rem}.capabilityToggle small{color:var(--shell-muted);font-size:.77rem;line-height:1.4}.capabilityToggle>.switch{flex:0 0 auto}
+    #viewTitle:focus-visible{outline:2px solid var(--shell-focus);outline-offset:4px;border-radius:3px}
+    @media(max-width:820px){
+      .capabilityGrid{grid-template-columns:1fr}
+      .rail{bottom:max(10px,env(safe-area-inset-bottom))}
+      .rail nav{overflow-x:auto;scrollbar-width:thin;padding-bottom:3px}
+      .rail nav button{flex:0 0 auto;min-height:44px;padding:6px 11px;font-size:.74rem;white-space:nowrap}
+      .saveBar{bottom:calc(80px + env(safe-area-inset-bottom));display:grid;grid-template-columns:repeat(2,minmax(0,1fr))}
+      .saveBar div{display:block;grid-column:1 / -1}
+      .content:has(.saveBar:not([hidden])){padding-bottom:calc(224px + env(safe-area-inset-bottom))}
+      .toast{bottom:calc(80px + env(safe-area-inset-bottom))}
+      body:has(.saveBar:not([hidden])) .toast{bottom:calc(204px + env(safe-area-inset-bottom))}
+    }
     """#
 
     static let javascript = #"""
     const $=s=>document.querySelector(s), $$=s=>[...document.querySelectorAll(s)];
     let token="", state=null, initialConfig="";let initialObject=null;
+    let loginRevision=0;
     const form=$("#configForm"), login=$("#login"), app=$("#app"), saveBar=$("#saveBar"), appearance=$("#appearanceSelect");
     try{sessionStorage.removeItem("noctweaveAdminToken");localStorage.removeItem("noctweave.operator.appearance")}catch{}
     function applyAppearance(value){const theme=["system","light","dark"].includes(value)?value:"system";document.documentElement.dataset.theme=theme;appearance.value=theme}
@@ -163,8 +176,29 @@ enum OperatorWebUI {
     function updateDirtyState(){const next=configFromForm(),dirty=JSON.stringify(next)!==initialConfig;saveBar.hidden=!dirty;if(dirty)$("#saveMessage").textContent=restartSettingsChanged(next)?"Storage or Noctweb host changes are saved now and activate after restart.":"Policy changes apply to new relay requests immediately.";toggleMode()}
     async function load(){try{const data=await api("/admin/api/state");login.hidden=true;app.hidden=false;$("#token").value="";fill(data)}catch(e){token="";login.hidden=false;app.hidden=true;$("#loginError").textContent=e.message}}
     $("#loginForm").addEventListener("submit",e=>{e.preventDefault();token=$("#token").value;load()});
-    $("#logout").addEventListener("click",()=>{token="";app.hidden=true;login.hidden=false;$("#token").value=""});
-    function showView(view){const button=$(`#navigation button[data-view="${view}"]`);if(!button||!viewMeta[view])return;$$('#navigation button').forEach(x=>x.classList.toggle("active",x===button));$$('.view').forEach(v=>v.classList.toggle("active",v.dataset.viewPanel===view));[$("#viewEyebrow").textContent,$("#viewTitle").textContent]=viewMeta[view];window.scrollTo({top:0,behavior:"smooth"})}
+    $("#logout").addEventListener("click",()=>{
+      loginRevision++;
+      token="";
+      app.hidden=true;
+      login.hidden=false;
+      $("#token").value="";
+      $("#token").focus();
+    });
+    function showView(view){
+      const button=$(`#navigation button[data-view="${view}"]`);
+      if(!button||!viewMeta[view])return;
+      for(const item of $$("#navigation button")){
+        item.classList.toggle("active",item===button);
+        if(item===button)item.setAttribute("aria-current","page");
+        else item.removeAttribute("aria-current");
+      }
+      $$(".view").forEach(panel=>panel.classList.toggle("active",panel.dataset.viewPanel===view));
+      const heading=$("#viewTitle");
+      [$("#viewEyebrow").textContent,heading.textContent]=viewMeta[view];
+      button.scrollIntoView({block:"nearest",inline:"nearest"});
+      window.scrollTo({top:0,behavior:matchMedia("(prefers-reduced-motion: reduce)").matches?"instant":"smooth"});
+      heading.focus({preventScroll:true});
+    }
     $("#navigation").addEventListener("click",e=>{const b=e.target.closest("button[data-view]");if(b)showView(b.dataset.view)});
     $$("[data-jump-view]").forEach(button=>button.addEventListener("click",()=>showView(button.dataset.jumpView)));
     $("#openNoctwebPublisher").addEventListener("click",()=>{const url=$("#openNoctwebPublisher").dataset.url;if(url)window.open(url,"_blank","noopener,noreferrer")});
@@ -173,7 +207,27 @@ enum OperatorWebUI {
     form.elements.onionTransportEnabled.addEventListener("change",()=>{if(!form.elements.onionTransportEnabled.checked)form.elements.mixnetTransportEnabled.checked=false;updateDirtyState()});
     form.elements.onionTransportRequiresFixedSizePackets.addEventListener("change",()=>{if(!form.elements.onionTransportRequiresFixedSizePackets.checked)form.elements.mixnetTransportEnabled.checked=false;updateDirtyState()});
     $("#discard").addEventListener("click",()=>fill(state));
-    $("#save").addEventListener("click",async()=>{const button=$("#save");button.disabled=true;try{const data=await api("/admin/api/config",{method:"PUT",body:JSON.stringify(configFromForm())});fill(data);showToast(data.status.restartRequired?"Configuration saved · restart required":"Configuration saved and applied") }catch(e){showToast(e.message,true)}finally{button.disabled=false}});
+    $("#save").addEventListener("click",async()=>{
+      const button=$("#save"), discard=$("#discard"), revision=loginRevision;
+      const body=JSON.stringify(configFromForm());
+      button.disabled=true;
+      button.textContent="Saving…";
+      discard.disabled=true;
+      form.inert=true;
+      try{
+        const data=await api("/admin/api/config",{method:"PUT",body});
+        if(revision!==loginRevision)return;
+        fill(data);
+        showToast(data.status.restartRequired?"Configuration saved · restart required":"Configuration saved and applied");
+      }catch(error){
+        if(revision===loginRevision)showToast(error.message,true);
+      }finally{
+        button.disabled=false;
+        button.textContent="Save configuration";
+        discard.disabled=false;
+        form.inert=false;
+      }
+    });
     if(token)load();
     """#
 }
